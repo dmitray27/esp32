@@ -1,5 +1,4 @@
-# app.py
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify  # Добавлен jsonify
 from datetime import datetime
 import os
 import json
@@ -47,6 +46,12 @@ def get_sensor_data():
 def index():
     sensor_data = get_sensor_data()
     return render_template('index.html', data=sensor_data)
+
+# Новый эндпоинт для API
+@app.route('/data')
+def data():
+    sensor_data = get_sensor_data()
+    return jsonify(sensor_data)  # Возвращаем данные в JSON-формате
 
 if __name__ == '__main__':
     app.run(debug=True)
