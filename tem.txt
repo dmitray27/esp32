@@ -1,1 +1,1 @@
-{"temperature":22.3,"timestamp":"2022-02-22T10:05:08+0300"}
+{"temperature":11.3,"timestamp":"2011-01-11T11:11:11+0300"}
