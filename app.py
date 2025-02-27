@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 # Конфигурация GitHub
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
-UPDATE_INTERVAL = 1  # Интервал синхронизации с GitHub (секунды)
+UPDATE_INTERVAL = 180  # Интервал синхронизации с GitHub (секунды)
 
 # Глобальные переменные для кеширования
 latest_data = {"error": "Идет первоначальная загрузка..."}
