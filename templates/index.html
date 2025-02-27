@@ -56,6 +56,16 @@
             justify-content: center;
             gap: 0.5rem;
         }
+
+        .error {
+            color: #e53e3e;
+            font-weight: bold;
+            margin: 1rem 0;
+        }
+
+        .hidden {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -65,22 +75,59 @@
             Температура
         </h1>
 
-        {% if data.error %}
-            <div class="error">{{ data.error }}</div>
-        {% else %}
-            <div class="temperature">{{ data.temperature }}°C</div>
-            
+        <div class="error hidden" id="error"></div>
+        
+        <div id="data-content">
+            <div class="temperature" id="temperature">{{ data.temperature }}°C</div>
+
             <div class="meta-info">
                 <div class="meta-item">
                     <span>📅</span>
-                    {{ data.date }}
+                    <span id="date">{{ data.date }}</span>
                 </div>
                 <div class="meta-item">
                     <span>🕒</span>
-                    {{ data.time }}
+                    <span id="time">{{ data.time }}</span>
                 </div>
             </div>
-        {% endif %}
+        </div>
     </div>
+
+    <script>
+        function updateDisplay(data) {
+            const errorElement = document.getElementById('error');
+            const dataContent = document.getElementById('data-content');
+
+            if (data.error) {
+                errorElement.textContent = data.error;
+                errorElement.classList.remove('hidden');
+                dataContent.classList.add('hidden');
+            } else {
+                errorElement.classList.add('hidden');
+                dataContent.classList.remove('hidden');
+                
+                document.getElementById('temperature').textContent = `${data.temperature}°C`;
+                document.getElementById('date').textContent = data.date;
+                document.getElementById('time').textContent = data.time;
+            }
+        }
+
+        async function fetchData() {
+            try {
+                const response = await fetch('/data?t=' + Date.now());
+                const data = await response.json();
+                updateDisplay(data);
+            } catch (error) {
+                console.error('Ошибка при обновлении данных:', error);
+                updateDisplay({ error: 'Ошибка связи с сервером' });
+            }
+        }
+
+        // Первое обновление при загрузке
+        fetchData();
+        
+        // Обновление каждую минуту
+        setInterval(fetchData, 60000);
+    </script>
 </body>
 </html>
