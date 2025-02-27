@@ -8,7 +8,7 @@ import threading
 app = Flask(__name__)
 
 # Конфигурация GitHub
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ/main/tem.txt"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
 UPDATE_INTERVAL = 5  # Интервал синхронизации с GitHub (секунды)
 
 # Глобальные переменные для кеширования
