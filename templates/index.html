@@ -1,192 +1,44 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <title>Метеостанция ESP32</title>
+    <title>Temperature Monitor</title>
     <style>
-        :root {
-            --primary: #2c3e50;
-            --accent: #e74c3c;
-            --bg: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            font-family: 'Segoe UI', system-ui;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: var(--bg);
-            padding: 20px;
-        }
-
-        .card {
-            background: rgba(255, 255, 255, 0.97);
-            padding: 2rem;
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            backdrop-filter: blur(12px);
-            width: 100%;
-            max-width: 500px;
-            text-align: center;
-            transition: transform 0.3s;
-            position: relative;
-        }
-
-        .card.loading::after {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255,255,255,0.8);
-            border-radius: 15px;
-            animation: pulse 1.5s infinite;
-        }
-
-        .temperature {
-            font-size: 4.5rem;
-            font-weight: 300;
-            color: var(--accent);
-            margin: 1rem 0;
-            position: relative;
-        }
-
-        .temperature::after {
-            content: "°C";
-            font-size: 0.4em;
-            vertical-align: super;
-            color: var(--primary);
-        }
-
-        .datetime {
-            color: #7f8c8d;
-            font-size: 1.1rem;
-            margin: 1.5rem 0;
-            display: grid;
-            gap: 0.5rem;
-        }
-
-        .version {
-            color: #95a5a6;
-            font-size: 0.9rem;
-            margin-top: 1.5rem;
-        }
-
-        .error-box {
-            color: #c0392b;
-            background: #f8d7da;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-top: 1.5rem;
-            display: none;
-            animation: shake 0.5s;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 0.6; }
-            50% { opacity: 0.3; }
-            100% { opacity: 0.6; }
-        }
-
-        @keyframes shake {
-            0% { transform: translateX(0); }
-            25% { transform: translateX(-8px); }
-            50% { transform: translateX(8px); }
-            75% { transform: translateX(-4px); }
-            100% { transform: translateX(0); }
-        }
-
-        @media (max-width: 480px) {
-            .card {
-                padding: 1.5rem;
-            }
-            .temperature {
-                font-size: 3.5rem;
-            }
-        }
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .data-box { background: #f0f0f0; padding: 20px; border-radius: 10px; }
+        .temperature { color: #e74c3c; font-size: 24px; }
+        .timestamp { color: #7f8c8d; }
     </style>
 </head>
 <body>
-    <div class="card" id="card">
-        <div class="temperature" id="temperature">-</div>
-        
-        <div class="datetime">
-            <div id="date">--.--.----</div>
-            <div id="time">--:--:--</div>
-        </div>
-
-        <div class="version">
-            Версия данных: <span id="version">000000</span>
-        </div>
-
-        <div class="error-box" id="error"></div>
+    <h1>Температура с датчика</h1>
+    <div class="data-box">
+        {% if data %}
+            <p class="temperature">{{ data.temperature }} °C</p>
+            <p class="timestamp">Обновлено: {{ data.timestamp }}</p>
+            <p class="version">Версия данных: {{ data.version }}</p>
+        {% else %}
+            <p>Загрузка данных...</p>
+        {% endif %}
     </div>
 
     <script>
-        const card = document.getElementById('card');
-        const temperature = document.getElementById('temperature');
-        const date = document.getElementById('date');
-        const time = document.getElementById('time');
-        const version = document.getElementById('version');
-        const errorBox = document.getElementById('error');
-
-        let updateInterval = 3000; // 3 секунды
-        let retryCount = 0;
-
-        async function fetchData() {
-            try {
-                card.classList.add('loading');
-                const timestamp = Date.now();
-                const response = await fetch(`/data?_=${timestamp}`);
-                
-                if (!response.ok) {
-                    throw new Error(`Ошибка HTTP: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                // Обновление данных
-                temperature.textContent = data.temperature;
-                date.textContent = data.date;
-                time.textContent = data.time;
-                version.textContent = data.version;
-                
-                errorBox.style.display = 'none';
-                retryCount = 0;
-                
-            } catch (err) {
-                errorBox.textContent = `Ошибка: ${err.message}`;
-                errorBox.style.display = 'block';
-                version.textContent = 'ERROR';
-                
-                // Экспоненциальная задержка при ошибках
-                retryCount++;
-                updateInterval = Math.min(30000, 3000 * Math.pow(2, retryCount));
-                
-            } finally {
-                card.classList.remove('loading');
-                setTimeout(fetchData, updateInterval);
-            }
+        // Автообновление данных каждые 3 секунды
+        function updateData() {
+            fetch('/data')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error("Ошибка:", data.error);
+                        return;
+                    }
+                    document.querySelector('.temperature').textContent = `${data.temperature} °C`;
+                    document.querySelector('.timestamp').textContent = `Обновлено: ${data.timestamp}`;
+                    document.querySelector('.version').textContent = `Версия данных: ${data.version}`;
+                });
         }
 
-        // Первый запрос
-        fetchData();
+        setInterval(updateData, 3000);
+        updateData(); // Первоначальная загрузка
     </script>
 </body>
 </html>
