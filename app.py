@@ -1,7 +1,8 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 import requests
 import hashlib
-import time
+import base64
+import json
 
 app = Flask(__name__)
 
@@ -10,28 +11,29 @@ CACHE = {"etag": "", "data": None}
 
 @app.route('/data')
 def get_data():
-    etag = hashlib.md5(str(time.time()).encode()).hexdigest()
-    headers = {"Accept": "application/vnd.github.v3.raw", "If-None-Match": etag}
-    
+    headers = {"Accept": "application/vnd.github.v3.raw", "If-None-Match": CACHE["etag"]}
+
     try:
         response = requests.get(GITHUB_API_URL, headers=headers, timeout=5)
         if response.status_code == 304:
             return jsonify(CACHE["data"])
-        
+
         data = response.json()
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        file_data = json.loads(content)
+
         CACHE.update({
             "etag": response.headers.get('ETag', ''),
             "data": {
-                "temperature": data["temperature"],
-                "timestamp": data["timestamp"],
+                "temperature": file_data["temperature"],
+                "timestamp": file_data["timestamp"],
                 "version": hashlib.md5(response.text.encode()).hexdigest()[:6]
             }
         })
         return jsonify(CACHE["data"])
-    
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-
-# ... остальные маршруты ...
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
