@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Умный термометр</title>
+    <title>Метеостанция ESP32</title>
     <style>
         :root {
             --primary: #2c3e50;
@@ -21,7 +21,7 @@
         }
 
         body {
-            font-family: 'Roboto', sans-serif;
+            font-family: 'Segoe UI', system-ui;
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -30,32 +30,26 @@
         }
 
         .card {
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.97);
             padding: 2rem;
-            border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
             backdrop-filter: blur(12px);
             width: 90%;
             max-width: 400px;
             text-align: center;
-            transition: transform 0.3s ease;
+            transition: transform 0.3s;
         }
 
-        .card:hover {
-            transform: translateY(-5px);
-        }
-
-        .icon {
-            font-size: 4rem;
-            margin-bottom: 1rem;
-            animation: pulse 2s infinite;
+        .card.error {
+            animation: shake 0.5s;
         }
 
         .temperature {
             font-size: 4.5rem;
             font-weight: 300;
             color: var(--accent);
-            margin: 0.5rem 0;
+            margin: 1rem 0;
             position: relative;
         }
 
@@ -72,7 +66,7 @@
             margin: 1.5rem 0;
         }
 
-        .error {
+        .error-box {
             color: #c0392b;
             background: #f8d7da;
             padding: 1rem;
@@ -81,18 +75,19 @@
             display: none;
         }
 
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            50% { transform: translateX(10px); }
+            75% { transform: translateX(-5px); }
+            100% { transform: translateX(0); }
         }
 
         @media (max-width: 480px) {
             .card {
                 padding: 1.5rem;
-                border-radius: 15px;
+                border-radius: 12px;
             }
-            
             .temperature {
                 font-size: 3.5rem;
             }
@@ -100,47 +95,57 @@
     </style>
 </head>
 <body>
-    <div class="card">
-        <div class="icon">🌡️</div>
-        <div class="temperature" id="temp">-</div>
+    <div class="card" id="card">
+        <div class="temperature" id="temperature">-</div>
         <div class="datetime">
             <div id="date">-</div>
             <div id="time">-</div>
         </div>
-        <div class="error" id="error"></div>
+        <div class="error-box" id="error"></div>
     </div>
 
     <script>
         function updateData() {
             fetch(`/data?t=${Date.now()}`)
                 .then(response => {
-                    if(!response.ok) throw new Error('Ошибка сети');
+                    if (!response.ok) throw new Error('Сервер недоступен');
                     return response.json();
                 })
                 .then(data => {
-                    const errorElement = document.getElementById('error');
-                    if(data.error) {
-                        errorElement.textContent = data.error;
-                        errorElement.style.display = 'block';
-                        document.getElementById('temp').textContent = '-';
-                        document.getElementById('date').textContent = '-';
-                        document.getElementById('time').textContent = '-';
+                    const card = document.getElementById('card');
+                    const errorBox = document.getElementById('error');
+                    
+                    if (data.error || !data.temperature) {
+                        showError(data.error || 'Некорректные данные');
+                        card.classList.add('error');
                     } else {
-                        errorElement.style.display = 'none';
-                        document.getElementById('temp').textContent = data.temperature;
+                        card.classList.remove('error');
+                        errorBox.style.display = 'none';
+                        document.getElementById('temperature').textContent = data.temperature;
                         document.getElementById('date').textContent = data.date;
                         document.getElementById('time').textContent = data.time;
                     }
                 })
                 .catch(error => {
-                    document.getElementById('error').textContent = error.message;
-                    document.getElementById('error').style.display = 'block';
+                    showError(error.message);
+                    document.getElementById('card').classList.add('error');
                 });
         }
 
-        // Обновление данных каждые 2 секунды
+        function showError(message) {
+            const errorBox = document.getElementById('error');
+            errorBox.textContent = message;
+            errorBox.style.display = 'block';
+            document.getElementById('temperature').textContent = '-';
+            document.getElementById('date').textContent = '-';
+            document.getElementById('time').textContent = '-';
+        }
+
+        // Первый запрос сразу при загрузке
+        updateData();
+        
+        // Автообновление каждые 2 секунды
         setInterval(updateData, 2000);
-        updateData(); // Первый запрос сразу
     </script>
 </body>
 </html>
