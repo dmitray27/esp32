@@ -3,51 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Температура в реальном времени</title>
+    <title>Монитор температуры</title>
     <style>
-        /* Добавьте предыдущие стили */
-        .commit-info {
-            font-size: 0.8em;
-            color: #666;
-            margin-top: 1em;
+        :root {
+            --text-primary: #2d3748;
+            --text-secondary: #718096;
+            --bg-primary: #f7fafc;
+            --accent: #4299e1;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.3s ease;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            width: min(90%, 400px);
+            text-align: center;
+            transition: transform 0.2s ease;
+        }
+
+        h1 {
+            color: var(--text-primary);
+            margin: 0 0 1.5rem;
+            font-size: 1.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+        }
+
+        .temperature {
+            font-size: 4.5rem;
+            font-weight: 300;
+            color: var(--text-primary);
+            margin: 1rem 0;
+            line-height: 1;
+            opacity: 0.9;
+        }
+
+        .meta-info {
+            display: grid;
+            gap: 1rem;
+            margin-top: 2rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .error {
+            color: #e53e3e;
+            padding: 1rem;
+            background: #fff5f5;
+            border-radius: 0.5rem;
+            margin: 1rem 0;
+        }
+
+        .refresh-indicator {
+            height: 3px;
+            background: var(--accent);
+            width: 0%;
+            transition: width 5s linear;
+            margin-top: 1rem;
         }
     </style>
 </head>
 <body>
     <div class="container">
+        <h1>
+            <span>🌡️</span>
+            Температура
+        </h1>
+
         <div id="content">
-            <!-- Прежнее содержимое -->
+            {% if data.error %}
+                <div class="error">{{ data.error }}</div>
+            {% else %}
+                <div class="temperature">{{ data.temperature }}°C</div>
+                <div class="meta-info">
+                    <div class="meta-item">
+                        <span>📅</span>
+                        {{ data.date }}
+                    </div>
+                    <div class="meta-item">
+                        <span>🕒</span>
+                        {{ data.time }}
+                    </div>
+                </div>
+            {% endif %}
         </div>
-        <div class="commit-info">
-            Коммит: <span id="commitHash">N/A</span>
-        </div>
+        <div class="refresh-indicator" id="refreshIndicator"></div>
     </div>
 
     <script>
-        const eventSource = new EventSource('/stream');
-        
-        eventSource.onmessage = function(e) {
-            const data = JSON.parse(e.data);
-            updateDisplay(data);
-        };
-
-        function updateDisplay(data) {
-            if (data.error) {
-                showError(data.error);
-                return;
+        // Функция для плавного обновления данных
+        async function refreshData() {
+            try {
+                // Показываем индикатор обновления
+                const indicator = document.getElementById('refreshIndicator');
+                indicator.style.width = '100%';
+                
+                const response = await fetch(window.location.href, {
+                    headers: {
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const html = await response.text();
+                const parser = new DOMParser();
+                const newDoc = parser.parseFromString(html, 'text/html');
+                const newContent = newDoc.getElementById('content').innerHTML;
+                
+                // Плавное обновление контента
+                document.getElementById('content').innerHTML = newContent;
+                
+            } catch (error) {
+                console.error('Ошибка обновления:', error);
+            } finally {
+                // Сбрасываем индикатор
+                indicator.style.width = '0%';
             }
-            
-            document.querySelector('.temperature').textContent = 
-                `${data.temperature}°C`;
-            document.getElementById('date').textContent = data.date;
-            document.getElementById('time').textContent = data.time;
-            document.getElementById('commitHash').textContent = 
-                data.sha.substring(0, 7);
         }
 
-        function showError(message) {
-            // Реализация показа ошибок
-        }
+        // Обновляем каждые 5 секунд
+        setInterval(refreshData, 5000);
+        
+        // Первое обновление через 100ms после загрузки
+        setTimeout(refreshData, 100);
     </script>
 </body>
 </html>
