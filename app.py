@@ -1,52 +1,86 @@
-# app.py
-from flask import Flask, render_template
-from datetime import datetime
-import os
-import json
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Монитор температуры</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+        }
 
-app = Flask(__name__)
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+        }
 
-DATA_FILE = os.path.join(os.path.dirname(__file__), 'tem.txt')
+        h1 {
+            color: #4a5568;
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
 
-def get_sensor_data():
-    try:
-        with open(DATA_FILE, 'r') as f:
-            raw_data = f.read().strip()
+        .temperature {
+            font-size: 6rem;
+            color: #2c3e50;
+            font-weight: 300;
+            margin: 1rem 0;
+            line-height: 1;
+        }
 
-            # Парсим JSON-данные
-            data = json.loads(raw_data)
+        .meta-info {
+            display: grid;
+            gap: 1rem;
+            margin-top: 2rem;
+            color: #718096;
+        }
 
-            # Извлекаем значения
-            temperature = data.get('temperature')
-            timestamp = data.get('timestamp')
+        .meta-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <span>🌡️</span>
+            Температура
+        </h1>
 
-            # Проверяем наличие ключей
-            if not temperature or not timestamp:
-                return {"error": "Некорректная структура JSON"}
+        {% if data.error %}
+            <div class="error">{{ data.error }}</div>
+        {% else %}
+            <div class="temperature">{{ data.temperature }}°C</div>
 
-            # Парсим временную метку
-            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-
-            return {
-                "temperature": temperature,
-                "date": dt.strftime("%Y-%m-%d"),
-                "time": dt.strftime("%H:%M:%S"),
-                "error": None
-            }
-
-    except FileNotFoundError:
-        return {"error": "Файл tem.txt не найден"}
-    except json.JSONDecodeError:
-        return {"error": "Ошибка декодирования JSON"}
-    except ValueError as e:
-        return {"error": f"Ошибка формата времени: {str(e)}"}
-    except Exception as e:
-        return {"error": f"Неизвестная ошибка: {str(e)}"}
-
-@app.route('/')
-def index():
-    sensor_data = get_sensor_data()
-    return render_template('index.html', data=sensor_data)
-
-if __name__ == '__main__':
-    app.run(debug=True)
+            <div class="meta-info">
+                <div class="meta-item">
+                    <span>📅</span>
+                    {{ data.date }}
+                </div>
+                <div class="meta-item">
+                    <span>🕒</span>
+                    {{ data.time }}
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>
