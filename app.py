@@ -16,17 +16,15 @@ def index():
 @app.route('/data')
 def get_data():
     headers = {"Accept": "application/vnd.github.v3.raw", "If-None-Match": CACHE["etag"]}
-
     try:
         response = requests.get(GITHUB_API_URL, headers=headers, timeout=5)
+        print(f"GitHub Response Status: {response.status_code}")  # Отладка
         if response.status_code == 304:
             return jsonify(CACHE["data"])
-
-        # Декодируем содержимое файла из Base64
-        data = response.json()
-        content = base64.b64decode(data["content"]).decode("utf-8")
-        file_data = json.loads(content)  # Парсим JSON из tem.txt
-
+        # Декодируем содержимое
+        content = base64.b64decode(response.json()["content"]).decode("utf-8")
+        print(f"Decoded Content: {content}")  # Отладка
+        file_data = json.loads(content)
         # Обновляем кэш
         CACHE.update({
             "etag": response.headers.get('ETag', ''),
@@ -37,8 +35,8 @@ def get_data():
             }
         })
         return jsonify(CACHE["data"])
-
     except Exception as e:
+        print(f"Error: {str(e)}")  # Отладка
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
