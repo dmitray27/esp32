@@ -1,155 +1,34 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Монитор температуры</title>
+    <title>Приветствие</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
             margin: 0;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-            min-height: 100vh;
+            background-color: #f0f0f0;
         }
-
         .container {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            max-width: 500px;
-            width: 100%;
-        }
-
-        h1 {
-            color: #1a73e8;
-            margin-bottom: 25px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .temperature {
-            font-size: 3.5rem;
-            font-weight: bold;
-            color: #202124;
             text-align: center;
-            margin: 25px 0;
+            padding: 2rem;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
-
-        .meta-info {
-            display: flex;
-            gap: 20px;
-            justify-content: center;
-            color: #5f6368;
-        }
-
-        .meta-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .error {
-            color: #dc3545;
-            background: #f8d7da;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            display: none;
-        }
-
-        .error.visible {
-            display: block;
-        }
-
-        .hidden {
-            display: none !important;
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5em;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>
-            <span>🌡️</span>
-            Температура
-        </h1>
-
-        <div class="error hidden" id="error"></div>
-
-        <div id="data-content">
-            <div class="temperature" id="temperature">
-                {% if data.temperature != 'N/A' %}
-                    {{ data.temperature }}°C
-                {% else %}
-                    Загрузка...
-                {% endif %}
-            </div>
-
-            <div class="meta-info">
-                <div class="meta-item">
-                    <span>📅</span>
-                    <span id="date">{{ data.date }}</span>
-                </div>
-                <div class="meta-item">
-                    <span>🕒</span>
-                    <span id="time">{{ data.time }}</span>
-                </div>
-            </div>
-        </div>
+        <h1>{{ greeting }}</h1>
+        <p>Данные загружены из файла tem.txt в репозитории GitHub</p>
     </div>
-
-    <script>
-        function updateDisplay(data) {
-            const errorElement = document.getElementById('error');
-            const dataContent = document.getElementById('data-content');
-
-            if (data.error) {
-                errorElement.textContent = data.error;
-                errorElement.classList.remove('hidden');
-                dataContent.classList.add('hidden');
-            } else {
-                errorElement.classList.add('hidden');
-                dataContent.classList.remove('hidden');
-
-                // Обновление только при наличии новых данных
-                if (data.temperature !== 'N/A') {
-                    document.getElementById('temperature').textContent = `${data.temperature}°C`;
-                    document.getElementById('date').textContent = data.date;
-                    document.getElementById('time').textContent = data.time;
-                }
-            }
-        }
-
-        async function fetchData() {
-            try {
-                const response = await fetch(`/data?_=${Date.now()}`);
-                
-                if (!response.ok) throw new Error(`Ошибка HTTP: ${response.status}`);
-                if (response.headers.get('content-type')?.includes('json')) {
-                    return await response.json();
-                }
-                throw new Error('Неверный формат ответа');
-
-            } catch (error) {
-                console.error('Ошибка:', error);
-                return { 
-                    error: `Ошибка связи: ${error.message}`,
-                    temperature: 'N/A',
-                    date: 'N/A',
-                    time: 'N/A'
-                };
-            }
-        }
-
-        // Первое обновление
-        fetchData().then(updateDisplay);
-
-        // Обновление каждые 5 секунд
-        setInterval(() => fetchData().then(updateDisplay), 5000);
-    </script>
 </body>
 </html>
