@@ -1,49 +1,146 @@
-from flask import Flask, render_template, jsonify, make_response
-from datetime import datetime
-import requests
-import json
-import time
-
-app = Flask(__name__)
-
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt?t="
-
-def fetch_data():
-    try:
-        # Добавляем timestamp для обхода кэша
-        response = requests.get(f"{GITHUB_RAW_URL}{int(time.time())}")
-        response.raise_for_status()
-        data = json.loads(response.text)
-        
-        # Конвертация времени
-        dt = datetime.fromisoformat(data['timestamp'].replace("+0300", "+03:00"))
-        return {
-            "temperature": data["temperature"],
-            "time": dt.strftime("%H:%M:%S"),
-            "date": dt.strftime("%d.%m.%Y"),
-            "error": None
-        }
-    except Exception as e:
-        return {
-            "temperature": "N/A",
-            "time": "N/A", 
-            "date": "N/A",
-            "error": f"Ошибка: {str(e)}"
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Умный термометр</title>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --accent: #e74c3c;
+            --bg: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         }
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
-@app.route('/data')
-def get_data():
-    data = fetch_data()
-    response = make_response(jsonify(data))
-    # Запрет кэширования
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
+        body {
+            font-family: 'Roboto', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: var(--bg);
+        }
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            backdrop-filter: blur(12px);
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            animation: pulse 2s infinite;
+        }
+
+        .temperature {
+            font-size: 4.5rem;
+            font-weight: 300;
+            color: var(--accent);
+            margin: 0.5rem 0;
+            position: relative;
+        }
+
+        .temperature::after {
+            content: "°C";
+            font-size: 0.4em;
+            vertical-align: super;
+            color: var(--primary);
+        }
+
+        .datetime {
+            color: #7f8c8d;
+            font-size: 1.1rem;
+            margin: 1.5rem 0;
+        }
+
+        .error {
+            color: #c0392b;
+            background: #f8d7da;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+            display: none;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        @media (max-width: 480px) {
+            .card {
+                padding: 1.5rem;
+                border-radius: 15px;
+            }
+            
+            .temperature {
+                font-size: 3.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">🌡️</div>
+        <div class="temperature" id="temp">-</div>
+        <div class="datetime">
+            <div id="date">-</div>
+            <div id="time">-</div>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <script>
+        function updateData() {
+            fetch(`/data?t=${Date.now()}`)
+                .then(response => {
+                    if(!response.ok) throw new Error('Ошибка сети');
+                    return response.json();
+                })
+                .then(data => {
+                    const errorElement = document.getElementById('error');
+                    if(data.error) {
+                        errorElement.textContent = data.error;
+                        errorElement.style.display = 'block';
+                        document.getElementById('temp').textContent = '-';
+                        document.getElementById('date').textContent = '-';
+                        document.getElementById('time').textContent = '-';
+                    } else {
+                        errorElement.style.display = 'none';
+                        document.getElementById('temp').textContent = data.temperature;
+                        document.getElementById('date').textContent = data.date;
+                        document.getElementById('time').textContent = data.time;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('error').textContent = error.message;
+                    document.getElementById('error').style.display = 'block';
+                });
+        }
+
+        // Обновление данных каждые 2 секунды
+        setInterval(updateData, 2000);
+        updateData(); // Первый запрос сразу
+    </script>
+</body>
+</html>
