@@ -10,4 +10,4 @@ timeout = 60  # Увеличиваем таймаут до 60 секунд
 capture_output = True  # Перехват логов из stdout/stderr
 loglevel = "debug"     # Уровень детализации логов (debug, info, warning, error)
 accesslog = "-"        # Логировать запросы в консоль
-errorlog = "-"         # Логировать ошибки в консоль
+errorlog = "-"         # Логировать ошибки в конссоль
