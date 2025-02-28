@@ -92,6 +92,18 @@ def parse_sensor_data():
 def get_data():
     return jsonify(parse_sensor_data())
 
+@app.route('/stream')
+def stream():
+    def event_stream():
+        last_sent_sha = None
+        while True:
+            if last_data['sha'] != last_sent_sha:
+                yield f"data: {json.dumps(parse_sensor_data())}\n\n"
+                last_sent_sha = last_data['sha']
+            time.sleep(1)
+    
+    return Response(event_stream(), mimetype="text/event-stream")
+
 @app.route('/')
 def index():
     return render_template('index.html')
