@@ -53,6 +53,10 @@ thread = threading.Thread(target=background_updater)
 thread.daemon = True
 thread.start()
 
+@app.route("/health")
+def health_check():
+    return jsonify(status="OK"), 200
+
 @app.route('/')
 def index():
     response = make_response(render_template('index.html', data=latest_data))
