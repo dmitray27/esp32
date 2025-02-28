@@ -4,7 +4,8 @@ import hashlib
 import time
 
 app = Flask(__name__)
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
 GITHUB_API_URL = "https://api.github.com/repos/dmitray27/esp32/contents/tem.txt"
 CACHE = {"etag": "", "data": None}
 
