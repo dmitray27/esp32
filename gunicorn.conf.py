@@ -4,7 +4,7 @@
 workers = 4
 worker_class = "gevent"
 bind = "0.0.0.0:10000"  # Порт Render по умолчанию
-timeout = 60  # Увеличиваем таймаут до 60 секунд
+timeout = 160  # Увеличиваем таймаут до 60 секунд
 
 # Логирование
 capture_output = True  # Перехват логов из stdout/stderr
