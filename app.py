@@ -43,6 +43,10 @@ def fetch_data():
 def index():
     return render_template('index.html')
 
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "ok", "version": "1.0"}), 200
+
 @app.route('/data')
 def get_data():
     data = fetch_data()
