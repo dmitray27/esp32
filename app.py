@@ -22,10 +22,12 @@ def get_data():
         if response.status_code == 304:
             return jsonify(CACHE["data"])
 
+        # Декодируем содержимое файла из Base64
         data = response.json()
         content = base64.b64decode(data["content"]).decode("utf-8")
-        file_data = json.loads(content)
+        file_data = json.loads(content)  # Парсим JSON из tem.txt
 
+        # Обновляем кэш
         CACHE.update({
             "etag": response.headers.get('ETag', ''),
             "data": {
