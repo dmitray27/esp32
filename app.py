@@ -8,13 +8,15 @@ import threading
 import time
 from cachetools import cached, TTLCache
 
+# Monkey patching для gevent
+from gevent import monkey
+monkey.patch_all()
+
 app = Flask(__name__)
 
 # Настройка логирования
-app.logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-app.logger.addHandler(handler)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Конфигурация
 GITHUB_RAW_URL = os.getenv("GITHUB_RAW_URL", "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt")
@@ -43,7 +45,7 @@ def fetch_from_github(retries=MAX_RETRIES):
             latest_data["details"] = "Подключение к GitHub..."
             latest_data["progress"] = "25%"
 
-        app.logger.debug("Запрос к GitHub...")
+        logger.debug("Запрос к GitHub...")
         response = requests.get(GITHUB_RAW_URL, timeout=10)
         response.raise_for_status()
 
@@ -64,16 +66,16 @@ def fetch_from_github(retries=MAX_RETRIES):
                 "details": "Данные актуальны",
                 "error": None
             })
-        app.logger.info("Данные успешно обновлены")
+        logger.info("Данные успешно обновлены")
 
     except Exception as e:
         if retries > 0:
-            app.logger.warning(f"Ошибка при обработке данных: {str(e)}. Повторная попытка через {RETRY_DELAY} секунд...")
+            logger.warning(f"Ошибка при обработке данных: {str(e)}. Повторная попытка через {RETRY_DELAY} секунд...")
             time.sleep(RETRY_DELAY)
             return fetch_from_github(retries - 1)
         else:
             error_msg = f"Ошибка при обработке данных: {str(e)}"
-            app.logger.error(error_msg)
+            logger.error(error_msg)
             with lock:
                 latest_data.update({
                     "status": "error",
@@ -102,8 +104,8 @@ def get_data():
 
 @app.route('/favicon.ico')
 def favicon():
-    return "", 204  # Пустой ответ, без ошибок
+    return "", 204  # Пустой ответ для favicon.ico
 
 if __name__ == "__main__":
-    app.logger.info("Приложение запущено")
+    logger.info("Приложение запущено")
     app.run(host="0.0.0.0", port=5000)
