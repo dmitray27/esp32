@@ -15,7 +15,7 @@ app.logger.addHandler(handler)
 
 # Конфигурация
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
-UPDATE_INTERVAL = 60
+UPDATE_INTERVAL = 120
 
 latest_data = {
     "temperature": "N/A",
