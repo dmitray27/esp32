@@ -27,6 +27,7 @@
             justify-content: center;
             align-items: center;
             background: var(--bg);
+            padding: 20px;
         }
 
         .card {
@@ -35,14 +36,23 @@
             border-radius: 15px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.1);
             backdrop-filter: blur(12px);
-            width: 90%;
-            max-width: 400px;
+            width: 100%;
+            max-width: 500px;
             text-align: center;
             transition: transform 0.3s;
+            position: relative;
         }
 
-        .card.error {
-            animation: shake 0.5s;
+        .card.loading::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.8);
+            border-radius: 15px;
+            animation: pulse 1.5s infinite;
         }
 
         .temperature {
@@ -64,6 +74,14 @@
             color: #7f8c8d;
             font-size: 1.1rem;
             margin: 1.5rem 0;
+            display: grid;
+            gap: 0.5rem;
+        }
+
+        .version {
+            color: #95a5a6;
+            font-size: 0.9rem;
+            margin-top: 1.5rem;
         }
 
         .error-box {
@@ -71,22 +89,28 @@
             background: #f8d7da;
             padding: 1rem;
             border-radius: 8px;
-            margin-top: 1rem;
+            margin-top: 1.5rem;
             display: none;
+            animation: shake 0.5s;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 0.3; }
+            100% { opacity: 0.6; }
         }
 
         @keyframes shake {
             0% { transform: translateX(0); }
-            25% { transform: translateX(-10px); }
-            50% { transform: translateX(10px); }
-            75% { transform: translateX(-5px); }
+            25% { transform: translateX(-8px); }
+            50% { transform: translateX(8px); }
+            75% { transform: translateX(-4px); }
             100% { transform: translateX(0); }
         }
 
         @media (max-width: 480px) {
             .card {
                 padding: 1.5rem;
-                border-radius: 12px;
             }
             .temperature {
                 font-size: 3.5rem;
@@ -97,55 +121,72 @@
 <body>
     <div class="card" id="card">
         <div class="temperature" id="temperature">-</div>
+        
         <div class="datetime">
-            <div id="date">-</div>
-            <div id="time">-</div>
+            <div id="date">--.--.----</div>
+            <div id="time">--:--:--</div>
         </div>
+
+        <div class="version">
+            Версия данных: <span id="version">000000</span>
+        </div>
+
         <div class="error-box" id="error"></div>
     </div>
 
     <script>
-        function updateData() {
-            fetch(`/data?t=${Date.now()}`)
-                .then(response => {
-                    if (!response.ok) throw new Error('Сервер недоступен');
-                    return response.json();
-                })
-                .then(data => {
-                    const card = document.getElementById('card');
-                    const errorBox = document.getElementById('error');
-                    
-                    if (data.error || !data.temperature) {
-                        showError(data.error || 'Некорректные данные');
-                        card.classList.add('error');
-                    } else {
-                        card.classList.remove('error');
-                        errorBox.style.display = 'none';
-                        document.getElementById('temperature').textContent = data.temperature;
-                        document.getElementById('date').textContent = data.date;
-                        document.getElementById('time').textContent = data.time;
-                    }
-                })
-                .catch(error => {
-                    showError(error.message);
-                    document.getElementById('card').classList.add('error');
-                });
+        const card = document.getElementById('card');
+        const temperature = document.getElementById('temperature');
+        const date = document.getElementById('date');
+        const time = document.getElementById('time');
+        const version = document.getElementById('version');
+        const errorBox = document.getElementById('error');
+
+        let updateInterval = 3000; // 3 секунды
+        let retryCount = 0;
+
+        async function fetchData() {
+            try {
+                card.classList.add('loading');
+                const timestamp = Date.now();
+                const response = await fetch(`/data?_=${timestamp}`);
+                
+                if (!response.ok) {
+                    throw new Error(`Ошибка HTTP: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                // Обновление данных
+                temperature.textContent = data.temperature;
+                date.textContent = data.date;
+                time.textContent = data.time;
+                version.textContent = data.version;
+                
+                errorBox.style.display = 'none';
+                retryCount = 0;
+                
+            } catch (err) {
+                errorBox.textContent = `Ошибка: ${err.message}`;
+                errorBox.style.display = 'block';
+                version.textContent = 'ERROR';
+                
+                // Экспоненциальная задержка при ошибках
+                retryCount++;
+                updateInterval = Math.min(30000, 3000 * Math.pow(2, retryCount));
+                
+            } finally {
+                card.classList.remove('loading');
+                setTimeout(fetchData, updateInterval);
+            }
         }
 
-        function showError(message) {
-            const errorBox = document.getElementById('error');
-            errorBox.textContent = message;
-            errorBox.style.display = 'block';
-            document.getElementById('temperature').textContent = '-';
-            document.getElementById('date').textContent = '-';
-            document.getElementById('time').textContent = '-';
-        }
-
-        // Первый запрос сразу при загрузке
-        updateData();
-        
-        // Автообновление каждые 2 секунды
-        setInterval(updateData, 2000);
+        // Первый запрос
+        fetchData();
     </script>
 </body>
 </html>
