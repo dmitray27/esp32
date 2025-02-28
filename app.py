@@ -1,86 +1,49 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Монитор температуры</title>
-    <style>
-        body {
-            font-family: 'Arial', sans-serif;
-            background: #f5f7fa;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin: 0;
-        }
+from flask import Flask, render_template, jsonify
+import requests
+import hashlib
+import base64
+import json
 
-        .container {
-            background: white;
-            padding: 2rem;
-            border-radius: 16px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            width: 90%;
-            max-width: 400px;
-            text-align: center;
-        }
+app = Flask(__name__)
 
-        h1 {
-            color: #4a5568;
-            margin-bottom: 1.5rem;
-            font-size: 1.8rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-        }
+GITHUB_API_URL = "https://api.github.com/repos/dmitray27/esp32/contents/tem.txt"
+CACHE = {"etag": "", "data": None}
 
-        .temperature {
-            font-size: 6rem;
-            color: #2c3e50;
-            font-weight: 300;
-            margin: 1rem 0;
-            line-height: 1;
-        }
+@app.route('/')
+def index():
+    return render_template('index.html', data=CACHE["data"])
 
-        .meta-info {
-            display: grid;
-            gap: 1rem;
-            margin-top: 2rem;
-            color: #718096;
-        }
+@app.route('/data')
+def get_data():
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "If-None-Match": CACHE["etag"]
+    }
+    try:
+        response = requests.get(GITHUB_API_URL, headers=headers, timeout=5)
+        if response.status_code == 304:
+            return jsonify(CACHE["data"])
+        if response.status_code != 200:
+            raise Exception(f"GitHub API error: {response.status_code}")
+        content = base64.b64decode(response.json()["content"]).decode("utf-8")
+        file_data = json.loads(content)
+        CACHE.update({
+            "etag": response.headers.get('ETag', ''),
+            "data": {
+                "temperature": file_data["temperature"],
+                "timestamp": file_data["timestamp"],
+                "version": hashlib.md5(response.text.encode()).hexdigest()[:6]
+            }
+        })
+        return jsonify(CACHE["data"])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-        .meta-item {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>
-            <span>🌡️</span>
-            Температура
-        </h1>
+# Важно: эта функция должна быть без лишних отступов!
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
-        {% if data.error %}
-            <div class="error">{{ data.error }}</div>
-        {% else %}
-            <div class="temperature">{{ data.temperature }}°C</div>
-
-            <div class="meta-info">
-                <div class="meta-item">
-                    <span>📅</span>
-                    {{ data.date }}
-                </div>
-                <div class="meta-item">
-                    <span>🕒</span>
-                    {{ data.time }}
-                </div>
-            </div>
-        {% endif %}
-    </div>
-</body>
-</html>
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
