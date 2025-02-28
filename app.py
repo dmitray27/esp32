@@ -59,4 +59,4 @@ def fetch_from_github():
         app.logger.info("Данные успешно обновлены")
 
     except Exception as e:
-        error_msg = f"Ошибка
+        error_msg = f"Ошибка: {type(e).__name__} - {str(e)}"
