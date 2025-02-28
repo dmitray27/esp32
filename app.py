@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, render_template, jsonify
 import requests
 import hashlib
 import base64
@@ -8,6 +8,10 @@ app = Flask(__name__)
 
 GITHUB_API_URL = "https://api.github.com/repos/dmitray27/esp32/contents/tem.txt"
 CACHE = {"etag": "", "data": None}
+
+@app.route('/')
+def index():
+    return render_template('index.html', data=CACHE["data"])
 
 @app.route('/data')
 def get_data():
