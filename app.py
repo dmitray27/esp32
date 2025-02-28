@@ -60,3 +60,33 @@ def fetch_from_github():
 
     except Exception as e:
         error_msg = f"Ошибка при обработке данных: {str(e)}"
+        app.logger.error(error_msg)
+        with lock:
+            latest_data.update({
+                "status": "error",
+                "details": error_msg,
+                "progress": "0%",
+                "error": str(e)
+            })
+
+def update_data_periodically():
+    while True:
+        fetch_from_github()
+        threading.Event().wait(UPDATE_INTERVAL)
+
+# Запуск потока для обновления данных
+threading.Thread(target=update_data_periodically, daemon=True).start()
+
+# Эндпоинты
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/data')
+def get_data():
+    with lock:
+        return jsonify(latest_data)
+
+if __name__ == "__main__":
+    app.logger.info("Приложение запущено")
+    app.run(host="0.0.0.0", port=5000)
