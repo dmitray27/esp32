@@ -1,94 +1,101 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from datetime import datetime
 import requests
 import json
-import time
+import hmac
+import hashlib
 
 app = Flask(__name__)
 
 # Конфигурация GitHub
-GITHUB_REPO = "dmitray27/esp32"
-DATA_FILE = "tem.txt"
-COMMITS_URL = f"https://api.github.com/repos/{GITHUB_REPO}/commits?path={DATA_FILE}&per_page=1"
-RAW_DATA_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{DATA_FILE}"
+REPO_OWNER = "dmitray27"
+REPO_NAME = "esp32"
+BRANCH = "main"  # Укажите нужную ветку
+WEBHOOK_SECRET = "your_webhook_secret"  # Замените на свой секрет
 
-# Состояние последнего коммита
-last_commit = {
+# GitHub API Endpoints
+COMMITS_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
+FILE_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/tem.txt"
+
+# Хранилище последних данных
+last_data = {
     'sha': None,
-    'timestamp': 0
+    'content': None,
+    'timestamp': None
 }
 
-def get_commit_info():
+def verify_signature(payload, signature):
+    digest = hmac.new(WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(f'sha256={digest}', signature)
+
+@app.route('/webhook', methods=['POST'])
+def github_webhook():
+    signature = request.headers.get('X-Hub-Signature-256', '')
+    payload = request.data
+
+    if not verify_signature(payload, signature):
+        return jsonify({'status': 'invalid signature'}), 403
+
+    event = request.headers.get('X-GitHub-Event')
+    
+    if event == 'push':
+        commits = request.json.get('commits', [])
+        for commit in commits:
+            if 'tem.txt' in commit.get('modified', []):
+                update_file_content()
+                return jsonify({'status': 'update triggered'})
+    
+    return jsonify({'status': 'ignored'})
+
+def update_file_content():
     try:
-        response = requests.get(
+        # Получаем информацию о последнем коммите
+        commits_response = requests.get(
             COMMITS_URL,
-            headers={'Accept': 'application/vnd.github.v3+json'},
-            timeout=3
+            params={'path': 'tem.txt', 'per_page': 1},
+            headers={'Accept': 'application/vnd.github.v3+json'}
         )
-        response.raise_for_status()
+        commits_response.raise_for_status()
         
-        commit_data = response.json()[0]
-        return {
-            'sha': commit_data['sha'],
-            'timestamp': datetime.fromisoformat(
-                commit_data['commit']['committer']['date'].replace('Z', '+00:00')
-            .timestamp()
-        }
-    except Exception as e:
-        app.logger.error(f"Commit check error: {str(e)}")
-        return None
-
-def fetch_latest_data():
-    try:
-        response = requests.get(RAW_DATA_URL, timeout=3)
-        response.raise_for_status()
-        return response.text.strip()
-    except Exception as e:
-        raise RuntimeError(f"Data fetch failed: {str(e)}")
-
-@app.route('/check-update')
-def check_update():
-    global last_commit
-    current_commit = get_commit_info()
-    
-    if not current_commit:
-        return jsonify({'update': False, 'error': 'Commit check failed'})
-    
-    if current_commit['sha'] != last_commit['sha']:
-        last_commit.update(current_commit)
-        return jsonify({'update': True})
-    
-    return jsonify({'update': False})
-
-@app.route('/get-data')
-def get_data():
-    try:
-        raw_data = fetch_latest_data()
-        data = json.loads(raw_data)
+        commit_data = commits_response.json()[0]
+        sha = commit_data['sha']
         
+        # Получаем содержимое файла
+        file_response = requests.get(FILE_URL)
+        file_response.raise_for_status()
+        
+        last_data.update({
+            'sha': sha,
+            'content': file_response.text.strip(),
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Update error: {str(e)}")
+
+def parse_sensor_data():
+    try:
+        data = json.loads(last_data['content'])
         dt = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
-        return jsonify({
+        
+        return {
             'temperature': data['temperature'],
             'date': dt.strftime("%Y-%m-%d"),
             'time': dt.strftime("%H:%M:%S"),
+            'sha': last_data['sha'],
             'error': None
-        })
+        }
     except Exception as e:
-        return jsonify({'error': str(e)})
+        return {'error': str(e)}
 
-@app.after_request
-def disable_caching(response):
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    return response
+@app.route('/data')
+def get_data():
+    return jsonify(parse_sensor_data())
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    # Инициализация при запуске
-    initial_commit = get_commit_info()
-    if initial_commit:
-        last_commit.update(initial_commit)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    update_file_content()  # Инициализация при запуске
+    app.run(host='0.0.0.0', port=5000)
