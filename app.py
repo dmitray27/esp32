@@ -6,7 +6,7 @@ import time
 
 app = Flask(__name__)
 
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt?t="
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt?cache_buster="
 
 def fetch_data():
     try:
