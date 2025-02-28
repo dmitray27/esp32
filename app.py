@@ -1,80 +1,35 @@
-from flask import Flask, render_template, jsonify, make_response
-from datetime import datetime, timezone
+from flask import Flask, jsonify, request
 import requests
-import json
+import hashlib
 import time
-import logging
 
 app = Flask(__name__)
 
-# Настройка логирования
-app.logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-app.logger.addHandler(handler)
-
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt?v="
-
-def fetch_data():
-    try:
-        # Запрос с временной меткой для обхода кэша
-        response = requests.get(f"{GITHUB_RAW_URL}?t={int(time.time())}", timeout=10)
-        response.raise_for_status()
-        data = json.loads(response.text)
-
-        # Обработка и валидация времени
-        raw_timestamp = data.get('timestamp', '')
-        timestamp = raw_timestamp.replace("+0300", "+03:00")
-
-        try:
-            dt = datetime.fromisoformat(timestamp).astimezone(timezone.utc)
-        except ValueError:
-            app.logger.error(f"Invalid timestamp format: {raw_timestamp}")
-            dt = datetime.now(timezone.utc)
-
-        return {
-            "temperature": f"{data.get('temperature', 'N/A'):.1f}",
-            "time": dt.strftime("%H:%M:%S"),
-            "date": dt.strftime("%d.%m.%Y"),
-            "error": None
-        }
-    except Exception as e:
-        app.logger.error(f"Data fetch error: {str(e)}")
-        return {
-            "temperature": "N/A",
-            "time": "N/A",
-            "date": "N/A",
-            "error": f"Ошибка: {str(e)}"
-        }
-
-@app.route('/')
-def index():
-    return render_template('index.html')
+GITHUB_API_URL = "https://api.github.com/repos/dmitray27/esp32/contents/tem.txt"
+CACHE = {"etag": "", "data": None}
 
 @app.route('/data')
 def get_data():
-    data = fetch_data()
-    response = make_response(jsonify(data))
-    # Заголовки против кэширования
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
+    etag = hashlib.md5(str(time.time()).encode()).hexdigest()
+    headers = {"Accept": "application/vnd.github.v3.raw", "If-None-Match": etag}
+    
+    try:
+        response = requests.get(GITHUB_API_URL, headers=headers, timeout=5)
+        if response.status_code == 304:
+            return jsonify(CACHE["data"])
+        
+        data = response.json()
+        CACHE.update({
+            "etag": response.headers.get('ETag', ''),
+            "data": {
+                "temperature": data["temperature"],
+                "timestamp": data["timestamp"],
+                "version": hashlib.md5(response.text.encode()).hexdigest()[:6]
+            }
+        })
+        return jsonify(CACHE["data"])
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/webhook', methods=['POST'])
-def github_webhook():
-    if request.json.get('ref') == 'refs/heads/main':
-        # Логика обновления данных
-        return jsonify({"status": "triggered"}), 200
-    return jsonify({"status": "ignored"}), 200
-
-@app.route('/health')
-def health_check():
-    return jsonify({
-        "status": "ok",
-        "version": "1.0",
-        "timestamp": datetime.now().isoformat()
-    }), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+# ... остальные маршруты ...
