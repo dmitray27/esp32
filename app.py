@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, render_template, jsonify, make_response
 from datetime import datetime
 import os
@@ -22,8 +21,14 @@ app.logger.addHandler(handler)
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
 UPDATE_INTERVAL = 180  # Интервал синхронизации (секунды)
 
-# Глобальные переменные для кеширования
-latest_data = {"error": "Идет первоначальная загрузка..."}
+# Инициализация данных с default-значениями
+DEFAULT_DATA = {
+    "temperature": "N/A",
+    "date": "N/A", 
+    "time": "N/A",
+    "error": "Идет первоначальная загрузка..."
+}
+latest_data = DEFAULT_DATA.copy()
 lock = threading.Lock()
 
 def fetch_from_github():
@@ -41,12 +46,12 @@ def fetch_from_github():
         if not required_keys.issubset(data.keys()):
             raise ValueError(f"Отсутствуют обязательные поля: {required_keys - set(data.keys())}")
 
-        # Парсинг времени с обработкой временной зоны
+        # Парсинг времени
         dt = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00')).astimezone()
 
         with lock:
             latest_data = {
-                "temperature": data['temperature'],
+                "temperature": data.get('temperature', 'N/A'),
                 "date": dt.strftime("%Y-%m-%d"),
                 "time": dt.strftime("%H:%M:%S"),
                 "error": None
@@ -58,8 +63,11 @@ def fetch_from_github():
         app.logger.error(f"GitHub sync failed: {error_msg}")
         
         with lock:
+            # Сохраняем последние валидные данные + ошибку
             latest_data = {
-                **latest_data,  # Сохраняем предыдущие значения
+                "temperature": latest_data.get('temperature', 'N/A'),
+                "date": latest_data.get('date', 'N/A'),
+                "time": latest_data.get('time', 'N/A'),
                 "error": error_msg
             }
 
@@ -69,41 +77,4 @@ def background_updater():
         fetch_from_github()
         threading.Event().wait(UPDATE_INTERVAL)
 
-# Запуск фонового потока только в главном процессе
-if not IS_GUNICORN or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    app.logger.info("Initializing background thread...")
-    thread = threading.Thread(target=background_updater)
-    thread.daemon = True
-    thread.start()
-
-@app.route("/health")
-def health_check():
-    return jsonify(status="OK", timestamp=datetime.utcnow().isoformat()), 200
-
-@app.route('/')
-def index():
-    with lock:
-        current_data = latest_data.copy()
-    
-    response = make_response(
-        render_template('index.html', 
-                        temperature=current_data.get('temperature', 'N/A'),
-                        date=current_data.get('date', 'N/A'),
-                        time=current_data.get('time', 'N/A'),
-                        error=current_data.get('error'))
-    )
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
-
-@app.route('/data')
-def get_data():
-    with lock:
-        response_data = latest_data.copy()
-    
-    response = jsonify(response_data)
-    response.headers["Cache-Control"] = "no-store, must-revalidate"
-    response.headers["Expires"] = "0"
-    return response
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000, debug=False)
+# Запуск потока только в главном процессе
