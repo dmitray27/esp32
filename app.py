@@ -100,6 +100,10 @@ def get_data():
     with lock:
         return jsonify(latest_data)
 
+@app.route('/favicon.ico')
+def favicon():
+    return "", 204  # Пустой ответ, без ошибок
+
 if __name__ == "__main__":
     app.logger.info("Приложение запущено")
     app.run(host="0.0.0.0", port=5000)
