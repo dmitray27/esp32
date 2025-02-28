@@ -10,15 +10,23 @@ GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt
 
 def fetch_data():
     try:
-        # Добавляем timestamp для обхода кэша
-        response = requests.get(f"{GITHUB_RAW_URL}{int(time.time())}")
+        response = requests.get(f"{GITHUB_RAW_URL}?t={int(time.time())}")
         response.raise_for_status()
         data = json.loads(response.text)
+
+        # Исправляем формат часового пояса
+        timestamp = data['timestamp'].replace("+0300", "+03:00")
         
-        # Конвертация времени
-        dt = datetime.fromisoformat(data['timestamp'].replace("+0300", "+03:00"))
+        try:
+            # Пытаемся распарсить timestamp из файла
+            dt = datetime.fromisoformat(timestamp)
+        except ValueError:
+            # Если формат неверный - используем текущее время и логируем ошибку
+            app.logger.error(f"Неверный формат времени: {timestamp}")
+            dt = datetime.now(timezone.utc)
+
         return {
-            "temperature": data["temperature"],
+            "temperature": f"{data['temperature']:.1f}",
             "time": dt.strftime("%H:%M:%S"),
             "date": dt.strftime("%d.%m.%Y"),
             "error": None
