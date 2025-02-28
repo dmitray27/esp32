@@ -1,66 +1,53 @@
 from flask import Flask, render_template
 from datetime import datetime
-import os
+import requests
 import json
-import requests  # Добавляем импорт библиотеки для HTTP-запросов
 
 app = Flask(__name__)
-
-# URL сырого файла в репозитории GitHub
 GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
 
-def get_sensor_data():
+def fetch_github_data():
     try:
-        # Загружаем файл с GitHub
-        response = requests.get(GITHUB_URL, timeout=5)
-        
-        # Проверяем статус ответа
-        if response.status_code != 200:
-            return {"error": f"Ошибка загрузки файла. Код: {response.status_code}"}
-            
-        raw_data = response.text.strip()
+        response = requests.get(
+            GITHUB_URL,
+            timeout=3,
+            headers={'Cache-Control': 'no-cache'}  # Явное отключение кэша GitHub
+        )
+        response.raise_for_status()  # Генерирует исключение для 4xx/5xx статусов
+        return response.text.strip()
+    except requests.RequestException as e:
+        raise Exception(f"Ошибка получения данных: {str(e)}")
 
-        # Парсим JSON-данные
+def parse_sensor_data(raw_data):
+    try:
         data = json.loads(raw_data)
-
-        # Извлекаем значения
-        temperature = data.get('temperature')
-        timestamp = data.get('timestamp')
-
-        # Проверяем наличие ключей
-        if not temperature or not timestamp:
-            return {"error": "Некорректная структура JSON"}
-
-        # Парсим временную метку
-        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-
+        dt = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+        
         return {
-            "temperature": temperature,
-            "date": dt.strftime("%Y-%m-%d"),
-            "time": dt.strftime("%H:%M:%S"),
-            "error": None
+            'temperature': data['temperature'],
+            'date': dt.strftime("%Y-%m-%d"),
+            'time': dt.strftime("%H:%M:%S"),
+            'error': None
         }
-
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Ошибка соединения: {str(e)}"}
-    except json.JSONDecodeError:
-        return {"error": "Ошибка декодирования JSON"}
+    except (KeyError, json.JSONDecodeError) as e:
+        raise ValueError("Некорректный формат данных")
     except ValueError as e:
-        return {"error": f"Ошибка формата времени: {str(e)}"}
-    except Exception as e:
-        return {"error": f"Неизвестная ошибка: {str(e)}"}
+        raise ValueError(f"Ошибка времени: {str(e)}")
 
 @app.after_request
-def add_no_cache_headers(response):
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
+def disable_caching(response):
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
 
 @app.route('/')
 def index():
-    sensor_data = get_sensor_data()
+    try:
+        raw_data = fetch_github_data()
+        sensor_data = parse_sensor_data(raw_data)
+    except Exception as e:
+        sensor_data = {'error': str(e)}
+    
     return render_template('index.html', data=sensor_data)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)  # В продакшене debug должен быть False
