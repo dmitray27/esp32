@@ -13,7 +13,7 @@ handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
 app.logger.addHandler(handler)
 
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt?v="
 
 def fetch_data():
     try:
@@ -60,6 +60,13 @@ def get_data():
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+@app.route('/webhook', methods=['POST'])
+def github_webhook():
+    if request.json.get('ref') == 'refs/heads/main':
+        # Логика обновления данных
+        return jsonify({"status": "triggered"}), 200
+    return jsonify({"status": "ignored"}), 200
 
 @app.route('/health')
 def health_check():
