@@ -1,111 +1,23 @@
-import os
-from flask import Flask, jsonify
-from datetime import datetime, timezone
+from flask import Flask, render_template
 import requests
-import json
-import logging
-import threading
-import time
-from cachetools import cached, TTLCache
-
-# Monkey patching для gevent
-from gevent import monkey
-monkey.patch_all()
 
 app = Flask(__name__)
 
-# Настройка логирования
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# URL к файлу tem.txt в вашем репозитории
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
 
-# Конфигурация
-GITHUB_RAW_URL = os.getenv("GITHUB_RAW_URL", "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt")
-UPDATE_INTERVAL = int(os.getenv("UPDATE_INTERVAL", 120))
-RETRY_DELAY = int(os.getenv("RETRY_DELAY", 10))
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
-
-latest_data = {
-    "temperature": "N/A",
-    "date": "N/A",
-    "time": "N/A",
-    "status": "loading",
-    "progress": "0%",
-    "details": "Старт приложения...",
-    "error": None
-}
-lock = threading.Lock()
-
-cache = TTLCache(maxsize=100, ttl=UPDATE_INTERVAL)
-
-@cached(cache)
-def fetch_from_github(retries=MAX_RETRIES):
-    global latest_data
+def get_greeting():
     try:
-        with lock:
-            latest_data["details"] = "Подключение к GitHub..."
-            latest_data["progress"] = "25%"
-
-        logger.debug("Запрос к GitHub...")
-        response = requests.get(GITHUB_RAW_URL, timeout=10)
-        response.raise_for_status()
-
-        with lock:
-            latest_data["details"] = "Чтение данных..."
-            latest_data["progress"] = "50%"
-
-        data = json.loads(response.text)
-        dt = datetime.fromisoformat(data['timestamp']).astimezone(timezone.utc)
-
-        with lock:
-            latest_data.update({
-                "temperature": data["temperature"],
-                "date": dt.strftime("%Y-%m-%d"),
-                "time": dt.strftime("%H:%M:%S"),
-                "status": "ready",
-                "progress": "100%",
-                "details": "Данные актуальны",
-                "error": None
-            })
-        logger.info("Данные успешно обновлены")
-
+        response = requests.get(GITHUB_RAW_URL)
+        response.raise_for_status()  # Проверка на ошибки HTTP
+        return response.text.strip()
     except Exception as e:
-        if retries > 0:
-            logger.warning(f"Ошибка при обработке данных: {str(e)}. Повторная попытка через {RETRY_DELAY} секунд...")
-            time.sleep(RETRY_DELAY)
-            return fetch_from_github(retries - 1)
-        else:
-            error_msg = f"Ошибка при обработке данных: {str(e)}"
-            logger.error(error_msg)
-            with lock:
-                latest_data.update({
-                    "status": "error",
-                    "details": error_msg,
-                    "progress": "0%",
-                    "error": str(e)
-                })
+        return f"Ошибка загрузки: {str(e)}"
 
-def update_data_periodically():
-    while True:
-        fetch_from_github()
-        time.sleep(UPDATE_INTERVAL)
+@app.route('/')
+def index():
+    greeting = get_greeting()
+    return render_template('index.html', greeting=greeting)
 
-# Запуск потока для обновления данных
-threading.Thread(target=update_data_periodically, daemon=True).start()
-
-# Эндпоинты
-@app.route('/health')
-def health_check():
-    return jsonify({"status": "ok"}), 200
-
-@app.route('/data')
-def get_data():
-    with lock:
-        return jsonify(latest_data)
-
-@app.route('/favicon.ico')
-def favicon():
-    return "", 204  # Пустой ответ для favicon.ico
-
-if __name__ == "__main__":
-    logger.info("Приложение запущено")
-    app.run(host="0.0.0.0", port=5000)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
