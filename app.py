@@ -15,15 +15,19 @@ def index():
 
 @app.route('/data')
 def get_data():
-    headers = {"Accept": "application/vnd.github.v3.raw", "If-None-Match": CACHE["etag"]}
+    headers = {
+        "Accept": "application/vnd.github.v3+json",  # Изменено
+        "If-None-Match": CACHE["etag"]
+    }
     try:
         response = requests.get(GITHUB_API_URL, headers=headers, timeout=5)
-        print(f"GitHub Response Status: {response.status_code}")  # Отладка
         if response.status_code == 304:
             return jsonify(CACHE["data"])
+        # Проверяем статус ответа
+        if response.status_code != 200:
+            raise Exception(f"GitHub API error: {response.status_code}")
         # Декодируем содержимое
         content = base64.b64decode(response.json()["content"]).decode("utf-8")
-        print(f"Decoded Content: {content}")  # Отладка
         file_data = json.loads(content)
         # Обновляем кэш
         CACHE.update({
@@ -36,8 +40,12 @@ def get_data():
         })
         return jsonify(CACHE["data"])
     except Exception as e:
-        print(f"Error: {str(e)}")  # Отладка
         return jsonify({"error": str(e)}), 500
+
+@app.after_request
+     def add_cors_headers(response):
+         response.headers['Access-Control-Allow-Origin'] = '*'
+         return response
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
