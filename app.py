@@ -27,7 +27,7 @@ def fetch_github_data():
         
         response = requests.get(
             url,
-            timeout=5,  # Увеличенный таймаут
+            timeout=5,
             headers={'Cache-Control': 'no-cache'}
         )
         response.raise_for_status()
@@ -39,7 +39,10 @@ def fetch_github_data():
 def parse_sensor_data(raw_data):
     try:
         data = json.loads(raw_data)
-        dt = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+        # Исправление формата времени (удаление смещения +0300)
+        dt_str = data['timestamp'].replace('+0300', '')
+        dt = datetime.fromisoformat(dt_str)
+        
         return {
             'temperature': data['temperature'],
             'date': dt.strftime("%Y-%m-%d"),
