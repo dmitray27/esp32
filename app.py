@@ -24,7 +24,7 @@ def fetch_github_data():
         # Добавляем уникальный параметр для обхода кэша
         timestamp = int(datetime.now().timestamp())
         url = f"{GITHUB_URL}?nocache={timestamp}"
-        
+
         response = requests.get(
             url,
             timeout=5,
@@ -42,10 +42,10 @@ def parse_sensor_data(raw_data):
         # Исправление формата времени (удаление смещения +0300)
         dt_str = data['timestamp'].replace('+0300', '')
         dt = datetime.fromisoformat(dt_str)
-        
+
         return {
             'temperature': data['temperature'],
-            'date': dt.strftime("%Y-%m-%d"),
+            'date': dt.strftime("%d.%m.%Y"),  # Измененный формат
             'time': dt.strftime("%H:%M:%S"),
             'error': None
         }
@@ -66,9 +66,9 @@ def index():
         sensor_data = parse_sensor_data(raw_data)
     except Exception as e:
         sensor_data['error'] = str(e)
-    
+
     return render_template('index.html', data=sensor_data)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port, debug=True)  # debug=True
+    app.run(host='0.0.0.0', port=port, debug=True)
