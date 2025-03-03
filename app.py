@@ -1,9 +1,13 @@
+# Патчинг gevent должен быть выполнен ПЕРВЫМ
+from gevent import monkey
+monkey.patch_all()
+
 from flask import Flask, render_template
 from datetime import datetime
 import requests
 import json
 import os
-import logging  # Добавлено для логирования
+import logging
 
 app = Flask(__name__)
 GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
@@ -11,22 +15,26 @@ GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
+@app.route('/health')
+def health_check():
+    return 'OK', 200
+
 def fetch_github_data():
     try:
-        # Добавляем параметр для обхода кэша GitHub
+        # Добавляем уникальный параметр для обхода кэша
         timestamp = int(datetime.now().timestamp())
         url = f"{GITHUB_URL}?nocache={timestamp}"
         
         response = requests.get(
-            url, 
-            timeout=5,  # Увеличен таймаут
+            url,
+            timeout=5,  # Увеличенный таймаут
             headers={'Cache-Control': 'no-cache'}
         )
         response.raise_for_status()
         return response.text.strip()
     except requests.RequestException as e:
         logging.error(f"Ошибка запроса: {str(e)}")
-        raise Exception(f"Не удалось получить данные")
+        raise Exception("Не удалось получить данные")
 
 def parse_sensor_data(raw_data):
     try:
@@ -38,10 +46,9 @@ def parse_sensor_data(raw_data):
             'time': dt.strftime("%H:%M:%S"),
             'error': None
         }
-    except (KeyError, json.JSONDecodeError) as e:
-        raise ValueError("Некорректный JSON")
-    except Exception as e:
-        raise ValueError(f"Ошибка: {str(e)}")
+    except (KeyError, json.JSONDecodeError, ValueError) as e:
+        logging.error(f"Ошибка парсинга: {str(e)}")
+        raise ValueError("Некорректные данные")
 
 @app.after_request
 def disable_caching(response):
@@ -56,10 +63,9 @@ def index():
         sensor_data = parse_sensor_data(raw_data)
     except Exception as e:
         sensor_data['error'] = str(e)
-        logging.error(f"Ошибка: {e}")
     
     return render_template('index.html', data=sensor_data)
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))  # Исправлено: 10000 вместо 5000
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
