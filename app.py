@@ -10,7 +10,7 @@ import os
 import logging
 
 app = Flask(__name__)
-GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32-telegra/main/tem.txt"
+GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32-telegram/main/tem.txt"
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
