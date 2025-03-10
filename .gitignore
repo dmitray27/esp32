@@ -4,3 +4,6 @@
    # Игнорировать архив и распакованную папку
    libev-4.33.tar.gz
    libev-4.33/
+libev-4.33.tar.gz
+libev-4.33/
+myenv/
