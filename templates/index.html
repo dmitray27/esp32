@@ -48,13 +48,15 @@
         .temperature {
             display: flex;
             align-items: center;
+            justify-content: center; /* Добавь эту строку */
             font-size: 4.5rem;
             font-weight: 300;
             color: var(--text-primary);
             margin: 1rem 0;
             line-height: 1;
             opacity: 0.9;
-            font-family: 'Segoe UI', system-ui, sans-serif; /* Явное указание шрифта */
+            font-family: 'Segoe UI', system-ui, sans-serif;
+}
         }
 
         .temperature span:first-child {
@@ -105,8 +107,8 @@
                 <div class="error">{{ data.error }}</div>
             {% else %}
                 <div class="temperature">
-                    <span>{{ data.temperature }}</span>
-                    <span>&nbsp;°C</span>
+                    <span>{{ data.temperature }}°С</span>
+                    
                 </div>
                 <div class="meta-info">
                     <!-- Добавленная строка -->
