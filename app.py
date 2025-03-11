@@ -10,7 +10,7 @@ import os
 import logging
 
 app = Flask(__name__)
-GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32-telegram/main/tem.txt"
+GITHUB_URL = "https://raw.githubusercontent.com/dmitray27/esp32/main/tem.txt"
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +31,21 @@ def fetch_github_data():
             headers={'Cache-Control': 'no-cache'}
         )
         response.raise_for_status()
-        return response.text.strip()
+        
+        # Обработка закомментированных строк
+        lines = response.text.strip().split('\n')
+        valid_lines = [
+            line.strip()
+            for line in lines
+            if line.strip() and not line.startswith(('#', '//'))
+        ]
+        
+        if not valid_lines:
+            raise ValueError("Микроконтроллер ESP32 выключен.")
+            
+        # Берем последнюю актуальную запись
+        return valid_lines[-1]
+        
     except requests.RequestException as e:
         logging.error(f"Ошибка запроса: {str(e)}")
         raise Exception("Не удалось получить данные")
@@ -74,6 +88,7 @@ def index():
         sensor_data = parse_sensor_data(raw_data)
     except Exception as e:
         sensor_data['error'] = str(e)
+        logging.error(f"Ошибка в маршруте /: {str(e)}")
 
     return render_template('index.html', data=sensor_data)
 
