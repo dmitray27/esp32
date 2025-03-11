@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Монитор температуры</title>
+    <title>Параметры ESP32</title>
     <style>
         :root {
             --text-primary: #2d3748;
@@ -20,7 +20,6 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            transition: background 0.3s ease;
         }
 
         .container {
@@ -29,53 +28,58 @@
             border-radius: 1rem;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             width: min(90%, 400px);
-            text-align: center;
-            transition: transform 0.2s ease;
         }
 
         h1 {
             color: var(--text-primary);
-            margin: 0 0 1.5rem;
             font-size: 1rem;
             font-weight: 300;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.75rem;
+            margin: 0 0 1.5rem;
             line-height: 1.5;
+            text-align: left;
         }
 
-        .temperature {
+        .parameters-title {
+            font-size: 1.1rem;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            font-weight: 500;
+            text-align: left;
+        }
+
+        .parameters-block {
+            margin: 1rem 0;
+            text-align: left;
+        }
+
+        .param {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
             display: flex;
             align-items: center;
-            justify-content: center; /* Добавь эту строку */
-            font-size: 4.5rem;
-            font-weight: 300;
-            color: var(--text-primary);
-            margin: 1rem 0;
-            line-height: 1;
-            opacity: 0.9;
-            font-family: 'Segoe UI', system-ui, sans-serif;
-}
-        }
-
-        .temperature span:first-child {
-            margin-right: 0.25em; /* Пробел между числом и символом */
+            gap: 0.5rem;
+            margin: 0.5rem 0;
+            line-height: 1.6;
         }
 
         .meta-info {
-            display: grid;
-            gap: 0.5rem;
-            margin-top: 2rem;
+            margin-top: 1.5rem;
             color: var(--text-secondary);
             font-size: 0.9rem;
+            text-align: left;
         }
 
         .meta-item {
             display: flex;
             align-items: center;
-            justify-content: center;
             gap: 0.5rem;
+            margin: 0.3rem 0;
+        }
+
+        /* Добавлено жирное начертание для заголовка */
+        .meta-info .meta-item:first-child {
+            font-weight: 700;
+            color: var(--text-primary);
         }
 
         .error {
@@ -84,6 +88,7 @@
             background: #fff5f5;
             border-radius: 0.5rem;
             margin: 1rem 0;
+            text-align: left;
         }
 
         .refresh-indicator {
@@ -98,24 +103,39 @@
 <body>
     <div class="container">
         <h1>
-            <span>🌡️</span>
-            Я — микроконтроллер ESP32, шлю всем привет из Махачкалы от Дмитрия и слежу за температурой своего кристалла. Не переживайте, для меня это нормальная температура. 🙂
+            Я — микроконтроллер ESP32, шлю привет от Дмитрия и слежу за своими параметрами. Дмитрий научил меня считывать свои параметры и размещать их в интернете. 🙂 Чтобы всё работало быстро и было контролируемо, Дмитрию пришлось поселить меня на платном хостинге. За моё проживание по этому веб-адресу Дмитрий платит, на данный момент, 355 рублей в месяц. 😢
+
         </h1>
 
         <div id="content">
             {% if data.error %}
                 <div class="error">{{ data.error }}</div>
             {% else %}
-                <div class="temperature">
-                    <span>{{ data.temperature }}°С</span>
+                <div class="parameters-block">
+                    <div class="parameters-title">Параметры микроконтроллера ESP32:</div>
                     
-                </div>
-                <div class="meta-info">
-                    <!-- Добавленная строка -->
-                    <div class="meta-item">
-                        <span>🔄</span>
-                        Последнее обновление температуры:
+                    <div class="param">
+                        🌡️ Температура: {{ data.temperature }}°С
                     </div>
+                    <div class="param">
+                        🔋 Напряжение питания: {{ data.voltage }} В
+                    </div>
+                    <div class="param">
+                        💾 Свободная память: {{ data.free_heap }} байт
+                    </div>
+                    <div class="param">
+                        〰️ Частота процессора: {{ data.cpu_freq }} МГц
+                    </div>
+                    <div class="param">
+                        📶 Уровень Wi-Fi: {{ data.wifi_rssi }} dBm
+                    </div>
+                    <div class="param">
+                        ⏳ Время работы: {{ data.uptime }}
+                    </div>
+                </div>
+
+                <div class="meta-info">
+                    <div class="meta-item">Последнее обновление:</div>
                     <div class="meta-item">
                         <span>📅</span>
                         {{ data.date }}
