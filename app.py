@@ -43,8 +43,16 @@ def parse_sensor_data(raw_data):
         dt_str = data['timestamp'].replace('+0300', '')
         dt = datetime.fromisoformat(dt_str)
 
+        # Преобразование uptime в "ч. м."
+        uptime = data['uptime'].replace("h", "ч.").replace("m", "м.")
+
         return {
             'temperature': data['temperature'],
+            'voltage': data['voltage'],
+            'free_heap': data['free_heap'],
+            'cpu_freq': data['cpu_freq'],
+            'wifi_rssi': data['wifi_rssi'],
+            'uptime': uptime,
             'date': dt.strftime("%d.%m.%Y"),  # Измененный формат
             'time': dt.strftime("%H:%M:%S"),
             'error': None
