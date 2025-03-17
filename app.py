@@ -41,7 +41,7 @@ def fetch_github_data():
         ]
         
         if not valid_lines:
-            raise ValueError("Микроконтроллер ESP32 выключен.")
+            raise ValueError("The ESP32 microcontroller is turned off.")
             
         # Берем последнюю актуальную запись
         return valid_lines[-1]
