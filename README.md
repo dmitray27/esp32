@@ -1,4 +1,3 @@
-# esp32
 # ESP32 Data Monitoring System
 
 **Repository**:  
