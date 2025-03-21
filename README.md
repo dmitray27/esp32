@@ -11,7 +11,7 @@ A real-time IoT monitoring system using ESP32 microcontroller with web interface
 ## 🌟 Key Features
 - Real-time sensor data logging (temperature, voltage, CPU metrics)
 - JSON data storage in `tem.txt` and `logs/temp_log.txt`
-- Auto-refreshing web interface (5-second updates)
+- Auto-refreshing web interface
 - Production deployment with Nginx reverse proxy
 
 ## 🚀 Quick Access
