@@ -1,6 +1,6 @@
 workers = 1
 worker_class = "gevent"
-bind = "0.0.0.0:10000"
+bind = "0.0.0.0:$PORT"
 timeout = 160
 preload = True
 # keepalive = 75
