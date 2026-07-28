@@ -14,7 +14,7 @@
 #include "tx_ad9851.h"
 #include "afsk_protocol.h"
 #include "afsk_decoder.h"
-#include "wifi_link_wifi.h"
+#include "wifi_link.h"
 
 static const char *TAG = "MAIN";
 

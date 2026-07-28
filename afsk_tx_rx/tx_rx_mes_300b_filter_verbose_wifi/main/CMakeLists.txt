@@ -4,7 +4,7 @@ idf_component_register(
         "tx_ad9851.c"
         "afsk_protocol.c"
         "afsk_decoder.c"
-        "wifi_link_wifi.c"
+        "wifi_link.c"
     INCLUDE_DIRS
         "."
     REQUIRES
