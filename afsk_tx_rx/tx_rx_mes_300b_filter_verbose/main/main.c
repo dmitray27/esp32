@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/i2s_std.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -13,6 +14,7 @@
 #include "tx_ad9851.h"
 #include "afsk_protocol.h"
 #include "afsk_decoder.h"
+#include "wifi_link.h"
 
 static const char *TAG = "MAIN";
 
@@ -27,10 +29,6 @@ static const char *TAG = "MAIN";
 #define I2S_DATA_PIN    GPIO_NUM_22
 #define SAMPLES_PER_BIT (SAMPLE_RATE / BAUD_RATE)
 
-/* Reassembly of a multi-block message. The protocol has no end-of-message
- * marker, so the message is considered complete once no further block arrives
- * for longer than it takes to send one: preamble + (payload + CRC) UART frames
- * + trailing marks + the inter-block gap, with 50% margin. */
 #define RX_ASSEMBLY_MAX 8192
 #define BLOCK_BITS      (PREAMBLE_BITS + (MAX_BLOCK_LEN + 1) * 10 + 10)
 #define BLOCK_TIME_MS   ((BLOCK_BITS * 1000) / BAUD_RATE + BLOCK_GAP_MS + \
@@ -40,17 +38,72 @@ static const char *TAG = "MAIN";
 static afsk_decoder_t decoder;
 static afsk_message_t message;
 
-static void tx_task(void *pvParameters) {
+static void tx_send_message(const char *text, size_t len)
+{
+    if (len == 0) {
+        return;
+    }
+
+    int blocks = 0;
+    for (int s = 0; s < (int)len; ) {
+        s += afsk_utf8_block_len(text, s, (int)len, MAX_BLOCK_LEN);
+        blocks++;
+    }
+    ESP_LOGI(TAG, "Message: %d bytes, Blocks: %d", (int)len, blocks);
+
+    int start = 0;
+    for (int i = 0; i < blocks; i++) {
+        int block_len = afsk_utf8_block_len(text, start, (int)len, MAX_BLOCK_LEN);
+
+        char block[MAX_BLOCK_LEN + 1];
+        memcpy(block, &text[start], block_len);
+        block[block_len] = '\0';
+
+        ESP_LOGI(TAG, "TX Block %d/%d: %s", i + 1, blocks, block);
+
+        if (tx_ad9851_send_block((const uint8_t *)block, block_len)) {
+            tx_ad9851_wait_idle();
+        } else {
+            ESP_LOGW(TAG, "Failed to send block, skipping");
+        }
+
+        start += block_len;
+
+        if (i < blocks - 1) {
+            vTaskDelay(pdMS_TO_TICKS(BLOCK_GAP_MS));
+        }
+    }
+
+    ESP_LOGI(TAG, "All blocks sent");
+}
+
+static void tx_task(void *pvParameters)
+{
+    QueueHandle_t tx_queue = (QueueHandle_t)pvParameters;
     ESP_LOGI(TAG, "TX task started on core %d", xPortGetCoreID());
 
-    char *input_buf = (char *)malloc(BUF_SIZE);
-    if (input_buf == NULL) {
-        ESP_LOGE(TAG, "FATAL: Failed to allocate %d bytes!", BUF_SIZE);
+    while (1) {
+        char *msg = NULL;
+        if (xQueueReceive(tx_queue, &msg, portMAX_DELAY) == pdPASS && msg) {
+            tx_send_message(msg, strlen(msg));
+            free(msg);
+        }
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void console_task(void *pvParameters)
+{
+    QueueHandle_t tx_queue = (QueueHandle_t)pvParameters;
+    ESP_LOGI(TAG, "Console task started on core %d", xPortGetCoreID());
+
+    char *line = (char *)malloc(BUF_SIZE);
+    if (!line) {
+        ESP_LOGE(TAG, "FATAL: Failed to allocate console buffer!");
         vTaskDelete(NULL);
         return;
     }
-    ESP_LOGI(TAG, "Input buffer: %d bytes | Block size: %d | Gap: %d ms",
-             BUF_SIZE, MAX_BLOCK_LEN, BLOCK_GAP_MS);
 
     int len = 0;
     bool line_truncated = false;
@@ -76,58 +129,36 @@ static void tx_task(void *pvParameters) {
                 fflush(stdout);
                 continue;
             }
+
             if (len > 0) {
-                input_buf[len] = '\0';
+                line[len] = '\0';
 
-                int blocks = 0;
-                for (int s = 0; s < len; ) {
-                    s += afsk_utf8_block_len(input_buf, s, len, MAX_BLOCK_LEN);
-                    blocks++;
-                }
-                ESP_LOGI(TAG, "Message: %d bytes, Blocks: %d", len, blocks);
-
-                int start = 0;
-                for (int i = 0; i < blocks; i++) {
-                    int block_len = afsk_utf8_block_len(input_buf, start, len,
-                                                        MAX_BLOCK_LEN);
-
-                    char block[MAX_BLOCK_LEN + 1];
-                    memcpy(block, &input_buf[start], block_len);
-                    block[block_len] = '\0';
-
-                    ESP_LOGI(TAG, "TX Block %d/%d: %s", i + 1, blocks, block);
-
-                    if (tx_ad9851_send_block((const uint8_t *)block, block_len)) {
-                        tx_ad9851_wait_idle();
+                char *msg = strdup(line);
+                if (msg) {
+                    if (xQueueSend(tx_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
+                        free(msg);
+                        ESP_LOGW(TAG, "TX queue full, console message dropped");
                     } else {
-                        ESP_LOGW(TAG, "Failed to send block, skipping");
+                        putchar('\n');
+                        fflush(stdout);
+                        printf("[MAIN] Enter next message: \r\n");
+                        fflush(stdout);
                     }
-
-                    start += block_len;
-
-                    if (i < blocks - 1) {
-                        vTaskDelay(pdMS_TO_TICKS(BLOCK_GAP_MS));
-                    }
+                } else {
+                    ESP_LOGE(TAG, "strdup failed for console message");
                 }
 
-                ESP_LOGI(TAG, "All blocks sent");
                 len = 0;
-                putchar('\n');
-                fflush(stdout);
-                printf("[MAIN] Enter next message: \r\n");
-                fflush(stdout);
             }
             continue;
         }
 
         if (line_truncated) {
-            /* Line already exceeded the buffer: keep dropping until Enter so a
-             * partial tail is never transmitted as a bogus message. */
             continue;
         }
 
         if (len < BUF_SIZE - 1) {
-            input_buf[len++] = (char)ch;
+            line[len++] = (char)ch;
             putchar(ch);
             fflush(stdout);
         } else {
@@ -135,11 +166,13 @@ static void tx_task(void *pvParameters) {
         }
     }
 
-    free(input_buf);
+    free(line);
     vTaskDelete(NULL);
 }
 
-static void rx_task(void *pvParameters) {
+static void rx_task(void *pvParameters)
+{
+    (void)pvParameters;
     ESP_LOGI(TAG, "RX task started on core %d", xPortGetCoreID());
 
     i2s_chan_handle_t rx_chan = NULL;
@@ -231,6 +264,8 @@ static void rx_task(void *pvParameters) {
             printf("%s\n", assembly);
             printf("########################################\n");
 
+            wifi_link_broadcast("Remote", assembly);
+
             assembly_len = 0;
             assembly_blocks = 0;
             assembly_dropped = 0;
@@ -299,7 +334,8 @@ static void rx_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-void app_main(void) {
+void app_main(void)
+{
     ESP_LOGI(TAG, "=== AFSK Transceiver (TX core0 / RX core1) ===");
 
     esp_err_t ret = nvs_flash_init();
@@ -310,9 +346,12 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
 
     tx_ad9851_init();
+    wifi_link_init();
 
-    /* TX pinned to core 0, RX pinned to core 1. */
-    xTaskCreatePinnedToCore(tx_task, "tx_task", 8192, NULL, 10, NULL, 0);
+    QueueHandle_t tx_queue = wifi_link_get_tx_queue();
+
+    xTaskCreatePinnedToCore(tx_task, "tx_task", 8192, tx_queue, 10, NULL, 0);
+    xTaskCreatePinnedToCore(console_task, "console_task", 4096, tx_queue, 5, NULL, 1);
     xTaskCreatePinnedToCore(rx_task, "rx_task", 8192, NULL, 10, NULL, 1);
 
     ESP_LOGI(TAG, "System ready. TX on Core 0, RX on Core 1");
