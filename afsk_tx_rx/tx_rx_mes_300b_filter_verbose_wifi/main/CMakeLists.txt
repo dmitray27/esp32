@@ -4,6 +4,7 @@ idf_component_register(
         "tx_ad9851.c"
         "afsk_protocol.c"
         "afsk_decoder.c"
+        "wifi_link_wifi.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -14,4 +15,8 @@ idf_component_register(
         esp_timer
         nvs_flash
         freertos
+        esp_wifi
+        esp_http_server
+        esp_netif
+        esp_event
 )
