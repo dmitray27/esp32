@@ -20,6 +20,7 @@
 #define WIFI_PASS       "afsk12345"
 #define WIFI_CHANNEL    1
 #define WIFI_MAX_STA    4
+#define WIFI_INACTIVE_TIME_S 30
 
 #define TX_QUEUE_LEN    4
 #define POST_BUF_SIZE   1024
@@ -202,7 +203,8 @@ static esp_err_t ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    uint8_t buf[128] = {0};
+    // Увеличили буфер для приема сообщений (имя + текст)
+    uint8_t buf[256] = {0};
     httpd_ws_frame_t ws_pkt = {0};
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
     ws_pkt.payload = buf;
@@ -216,12 +218,38 @@ static esp_err_t ws_handler(httpd_req_t *req)
 
     if (ws_pkt.type == HTTPD_WS_TYPE_TEXT && ws_pkt.len > 0) {
         ws_pkt.payload[ws_pkt.len] = '\0';
-        ESP_LOGI(TAG, "WS text from fd %d: %s",
-                 httpd_req_to_sockfd(req), ws_pkt.payload);
+        ESP_LOGI(TAG, "WS text from fd %d: %s", httpd_req_to_sockfd(req), ws_pkt.payload);
 
+        // Обработка смены имени
         if (strncmp((const char *)ws_pkt.payload, "setName:", 8) == 0) {
-            ESP_LOGI(TAG, "Client %d set name to %s",
-                     httpd_req_to_sockfd(req), ws_pkt.payload + 8);
+            ESP_LOGI(TAG, "Client %d set name to %s", httpd_req_to_sockfd(req), ws_pkt.payload + 8);
+        } 
+        // НОВАЯ ОБРАБОТКА: Прием сообщения от клиента
+        else if (strncmp((const char *)ws_pkt.payload, "msg:", 4) == 0) {
+            char *payload = (char *)ws_pkt.payload + 4;
+            char *from = payload;
+            char *colon = strchr(payload, ':');
+            
+            if (colon) {
+                *colon = '\0'; // Разделяем строку на "от кого" и "текст"
+                char *text = colon + 1;
+
+                // Кладем в очередь на передачу в эфир
+                if (s_tx_queue && strlen(text) > 0) {
+                    char *msg = strdup(text);
+                    if (msg) {
+                        if (xQueueSend(s_tx_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
+                            free(msg);
+                            ESP_LOGW(TAG, "TX queue full, WS message dropped");
+                        }
+                    }
+                }
+                // Рассылаем всем клиентам (включая отправителя, чтобы он увидел в чате)
+                wifi_link_broadcast(from, text);
+            } else {
+                ESP_LOGW(TAG, "Malformed msg frame, no name separator: %s",
+                         ws_pkt.payload);
+            }
         }
     }
 
@@ -237,12 +265,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t *evt = (wifi_event_ap_staconnected_t *)event_data;
-        ESP_LOGI(TAG, "Station "MACSTR" connected, AID=%d",
-                 MAC2STR(evt->mac), evt->aid);
+        ESP_LOGI(TAG, "Station "MACSTR" connected, AID=%d", MAC2STR(evt->mac), evt->aid);
     } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t *evt = (wifi_event_ap_stadisconnected_t *)event_data;
-        ESP_LOGI(TAG, "Station "MACSTR" disconnected, AID=%d",
-                 MAC2STR(evt->mac), evt->aid);
+        ESP_LOGI(TAG, "Station "MACSTR" disconnected, AID=%d", MAC2STR(evt->mac), evt->aid);
     }
 }
 
@@ -250,7 +276,7 @@ static esp_err_t start_http_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.core_id = 1;
+    config.core_id = 0; 
     config.max_open_sockets = 4;
     config.max_uri_handlers = 4;
     config.lru_purge_enable = true;
@@ -276,7 +302,7 @@ static esp_err_t start_http_server(void)
     httpd_register_uri_handler(s_http_server, &ping_uri);
     httpd_register_uri_handler(s_http_server, &send_uri);
 
-    ESP_LOGI(TAG, "HTTP server started on port 80");
+    ESP_LOGI(TAG, "HTTP server started on port 80 (Core 0)");
     return ESP_OK;
 }
 
@@ -285,7 +311,7 @@ static esp_err_t start_ws_server(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 81;
     config.ctrl_port = 32769;
-    config.core_id = 1;
+    config.core_id = 0; 
     config.max_open_sockets = WS_MAX_CLIENTS;
     config.max_uri_handlers = 2;
     config.lru_purge_enable = true;
@@ -308,7 +334,7 @@ static esp_err_t start_ws_server(void)
 
     httpd_register_uri_handler(s_ws_server, &ws_uri);
 
-    ESP_LOGI(TAG, "WS server started on port 81");
+    ESP_LOGI(TAG, "WS server started on port 81 (Core 0)");
     return ESP_OK;
 }
 
@@ -349,6 +375,7 @@ void wifi_link_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_inactive_time(WIFI_IF_AP, WIFI_INACTIVE_TIME_S));
 
     ESP_LOGI(TAG, "Wi-Fi AP started: SSID=%s, IP=192.168.4.1", WIFI_SSID);
 
