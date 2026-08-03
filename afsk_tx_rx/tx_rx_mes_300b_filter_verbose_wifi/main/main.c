@@ -165,9 +165,6 @@ static void console_task(void *pvParameters)
             line_truncated = true;
         }
     }
-
-    free(line);
-    vTaskDelete(NULL);
 }
 
 static void rx_task(void *pvParameters)

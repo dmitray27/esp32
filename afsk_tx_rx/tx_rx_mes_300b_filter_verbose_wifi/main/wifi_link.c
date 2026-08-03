@@ -1,8 +1,10 @@
 #include "wifi_link.h"
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,7 +29,14 @@
 #define TX_QUEUE_LEN    4
 #define POST_BUF_SIZE   1024
 #define WS_MAX_CLIENTS  4
-#define WS_BUF_SIZE     1024
+#define WS_NAME_MAX     32
+
+// Кадр длиннее WS_MAX_FRAME_LEN вычитывается и игнорируется: на 300 бод
+// столько данных всё равно уходит в эфир десятки секунд.
+// Кадр длиннее WS_HARD_MAX_LEN вычитывать не пытаемся — рвём сессию,
+// иначе придётся выделять произвольный объём памяти по запросу клиента.
+#define WS_MAX_FRAME_LEN 1024
+#define WS_HARD_MAX_LEN  8192
 
 static const char *TAG = "WIFI_LINK";
 
@@ -36,10 +45,202 @@ static httpd_handle_t s_http_server = NULL;
 static httpd_handle_t s_ws_server = NULL;
 static SemaphoreHandle_t s_ws_mutex = NULL;
 
+typedef struct {
+    int fd;
+    char name[WS_NAME_MAX];
+} ws_client_t;
+
+// Имена, присланные в setName:. Индекс — просто слот, ищем по fd
+static ws_client_t s_ws_clients[WS_MAX_CLIENTS];
+
 QueueHandle_t wifi_link_get_tx_queue(void)
 {
     return s_tx_queue;
 }
+
+// ============================
+// Имена клиентов
+// ============================
+
+static void client_set_name(int fd, const char *name)
+{
+    xSemaphoreTake(s_ws_mutex, portMAX_DELAY);
+
+    ws_client_t *slot = NULL;
+    for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+        if (s_ws_clients[i].fd == fd) {
+            slot = &s_ws_clients[i];
+            break;
+        }
+    }
+    if (!slot) {
+        for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+            if (s_ws_clients[i].fd == 0) {
+                slot = &s_ws_clients[i];
+                break;
+            }
+        }
+    }
+
+    if (slot) {
+        slot->fd = fd;
+        strlcpy(slot->name, name, sizeof(slot->name));
+    } else {
+        ESP_LOGW(TAG, "No free name slot for fd %d", fd);
+    }
+
+    xSemaphoreGive(s_ws_mutex);
+}
+
+// Копирует имя клиента в out. Возвращает false, если setName: не приходил
+static bool client_get_name(int fd, char *out, size_t out_size)
+{
+    bool found = false;
+
+    xSemaphoreTake(s_ws_mutex, portMAX_DELAY);
+    for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+        if (s_ws_clients[i].fd == fd && s_ws_clients[i].name[0] != '\0') {
+            strlcpy(out, s_ws_clients[i].name, out_size);
+            found = true;
+            break;
+        }
+    }
+    xSemaphoreGive(s_ws_mutex);
+
+    return found;
+}
+
+static void client_forget(int fd)
+{
+    xSemaphoreTake(s_ws_mutex, portMAX_DELAY);
+    for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+        if (s_ws_clients[i].fd == fd) {
+            s_ws_clients[i].fd = 0;
+            s_ws_clients[i].name[0] = '\0';
+        }
+    }
+    xSemaphoreGive(s_ws_mutex);
+}
+
+// ============================
+// Отправка WebSocket-кадров
+// ============================
+
+typedef struct {
+    httpd_handle_t server;
+    int fd;
+    char *payload;
+    size_t len;
+} ws_send_ctx_t;
+
+// Выполняется в задаче httpd: только так запись в сокет не пересекается
+// с ответами самого сервера. Вызывать httpd_ws_send_frame_async напрямую
+// из чужой задачи (например из rx_task) нельзя — кадры перемешаются
+static void ws_send_work(void *arg)
+{
+    ws_send_ctx_t *ctx = (ws_send_ctx_t *)arg;
+
+    httpd_ws_frame_t ws_pkt = {0};
+    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
+    ws_pkt.payload = (uint8_t *)ctx->payload;
+    ws_pkt.len = ctx->len;
+
+    esp_err_t ret = httpd_ws_send_frame_async(ctx->server, ctx->fd, &ws_pkt);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "WS send to fd %d failed: %d", ctx->fd, ret);
+    }
+
+    free(ctx->payload);
+    free(ctx);
+}
+
+static void ws_queue_text(int fd, const char *payload, size_t len)
+{
+    if (!s_ws_server || len == 0) {
+        return;
+    }
+
+    ws_send_ctx_t *ctx = (ws_send_ctx_t *)calloc(1, sizeof(ws_send_ctx_t));
+    if (!ctx) {
+        return;
+    }
+
+    ctx->payload = (char *)malloc(len + 1);
+    if (!ctx->payload) {
+        free(ctx);
+        return;
+    }
+
+    memcpy(ctx->payload, payload, len);
+    ctx->payload[len] = '\0';
+    ctx->server = s_ws_server;
+    ctx->fd = fd;
+    ctx->len = len;
+
+    if (httpd_queue_work(s_ws_server, ws_send_work, ctx) != ESP_OK) {
+        ESP_LOGW(TAG, "WS work queue full, frame to fd %d dropped", fd);
+        free(ctx->payload);
+        free(ctx);
+    }
+}
+
+// Служебное уведомление одному клиенту: приложение показывает его как SnackBar
+static void ws_notify(int fd, const char *text)
+{
+    char payload[128];
+    int len = snprintf(payload, sizeof(payload), "System:%s", text);
+    if (len < 0) {
+        return;
+    }
+    if (len > (int)sizeof(payload) - 1) {
+        len = (int)sizeof(payload) - 1;
+    }
+    ws_queue_text(fd, payload, (size_t)len);
+}
+
+void wifi_link_broadcast(const char *from, const char *text)
+{
+    if (!s_ws_server || !from || !text) {
+        return;
+    }
+
+    size_t from_len = strlen(from);
+    size_t text_len = strlen(text);
+    if (from_len == 0 || text_len == 0) {
+        return;
+    }
+
+    size_t payload_len = from_len + 1 + text_len;
+    char *payload = (char *)malloc(payload_len + 1);
+    if (!payload) {
+        return;
+    }
+    memcpy(payload, from, from_len);
+    payload[from_len] = ':';
+    memcpy(payload + from_len + 1, text, text_len);
+    payload[payload_len] = '\0';
+
+    size_t client_count = WS_MAX_CLIENTS;
+    int client_fds[WS_MAX_CLIENTS];
+    if (httpd_get_client_list(s_ws_server, &client_count, client_fds) == ESP_OK) {
+        for (size_t i = 0; i < client_count; i++) {
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+            // В списке есть и сокеты, не прошедшие рукопожатие
+            if (httpd_ws_get_fd_info(s_ws_server, client_fds[i]) !=
+                HTTPD_WS_CLIENT_WEBSOCKET) {
+                continue;
+            }
+#endif
+            ws_queue_text(client_fds[i], payload, payload_len);
+        }
+    }
+
+    free(payload);
+}
+
+// ============================
+// HTTP
+// ============================
 
 static int hex_val(char c)
 {
@@ -67,47 +268,17 @@ static void url_decode(char *out, size_t out_size, const char *in, const char *e
     out[i] = '\0';
 }
 
-void wifi_link_broadcast(const char *from, const char *text)
+// Ищет значение параметра key ("from=") в теле формы. Совпадение считается
+// только в начале тела или после '&', иначе "myfrom=" сойдёт за "from="
+static char *find_param(char *body, const char *key)
 {
-    if (!s_ws_server || !from || !text) {
-        return;
-    }
-
-    size_t from_len = strlen(from);
-    size_t text_len = strlen(text);
-    if (from_len == 0 || text_len == 0) {
-        return;
-    }
-
-    size_t payload_len = from_len + 1 + text_len;
-    char *payload = (char *)malloc(payload_len + 1);
-    if (!payload) {
-        return;
-    }
-    memcpy(payload, from, from_len);
-    payload[from_len] = ':';
-    memcpy(payload + from_len + 1, text, text_len);
-    payload[payload_len] = '\0';
-
-    httpd_ws_frame_t ws_pkt = {0};
-    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-    ws_pkt.payload = (uint8_t *)payload;
-    ws_pkt.len = payload_len;
-
-    xSemaphoreTake(s_ws_mutex, portMAX_DELAY);
-    size_t max_clients = WS_MAX_CLIENTS;
-    int client_fds[WS_MAX_CLIENTS];
-    if (httpd_get_client_list(s_ws_server, &max_clients, client_fds) == ESP_OK) {
-        for (size_t i = 0; i < max_clients; i++) {
-            esp_err_t ret = httpd_ws_send_frame_async(s_ws_server, client_fds[i], &ws_pkt);
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "WS send to fd %d failed: %d", client_fds[i], ret);
-            }
+    size_t klen = strlen(key);
+    for (char *p = strstr(body, key); p; p = strstr(p + 1, key)) {
+        if (p == body || p[-1] == '&') {
+            return p + klen;
         }
     }
-    xSemaphoreGive(s_ws_mutex);
-
-    free(payload);
+    return NULL;
 }
 
 static esp_err_t ping_get_handler(httpd_req_t *req)
@@ -130,8 +301,15 @@ static esp_err_t send_post_handler(httpd_req_t *req)
         body_len = POST_BUF_SIZE - 1;
     }
 
+    esp_err_t result = ESP_FAIL;
+    char from[64] = {0};
+
+    // Оба буфера в куче: стек задачи httpd всего несколько килобайт
     char *body = (char *)malloc(POST_BUF_SIZE);
-    if (!body) {
+    char *text = (char *)calloc(1, POST_BUF_SIZE);
+    if (!body || !text) {
+        free(body);
+        free(text);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
         return ESP_FAIL;
     }
@@ -149,42 +327,52 @@ static esp_err_t send_post_handler(httpd_req_t *req)
     }
     body[total] = '\0';
 
-    esp_err_t result = ESP_FAIL;
-    char from[64] = {0};
-    char text[POST_BUF_SIZE] = {0};
-
-    char *p_from = strstr(body, "from=");
+    char *p_from = find_param(body, "from=");
     if (!p_from) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'from'");
         goto cleanup;
     }
-    p_from += 5;
 
-    char *p_from_end = strchr(p_from, '&');
-    if (!p_from_end) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'text'");
-        goto cleanup;
-    }
-
-    char *p_text = strstr(p_from_end, "text=");
+    char *p_text = find_param(body, "text=");
     if (!p_text) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'text'");
         goto cleanup;
     }
-    p_text += 5;
-    const char *p_text_end = body + total;
 
-    url_decode(from, sizeof(from), p_from, p_from_end);
-    url_decode(text, sizeof(text), p_text, p_text_end);
+    const char *body_end = body + total;
+    const char *p_from_end = strchr(p_from, '&');
+    const char *p_text_end = strchr(p_text, '&');
 
-    if (s_tx_queue && strlen(text) > 0) {
-        char *msg = strdup(text);
-        if (msg) {
-            if (xQueueSend(s_tx_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
-                free(msg);
-                ESP_LOGW(TAG, "TX queue full, message dropped");
-            }
-        }
+    url_decode(from, sizeof(from), p_from, p_from_end ? p_from_end : body_end);
+    url_decode(text, POST_BUF_SIZE, p_text, p_text_end ? p_text_end : body_end);
+
+    if (strlen(text) == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty 'text'");
+        goto cleanup;
+    }
+
+    if (!s_tx_queue) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No TX queue");
+        goto cleanup;
+    }
+
+    char *msg = strdup(text);
+    if (!msg) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        goto cleanup;
+    }
+
+    // В чат сообщение попадает только после того, как встало в очередь
+    // на передачу, иначе клиент видел бы "отправлено" для того,
+    // что в эфир не ушло
+    if (xQueueSend(s_tx_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
+        free(msg);
+        ESP_LOGW(TAG, "TX queue full, POST message dropped");
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "TX queue full", HTTPD_RESP_USE_STRLEN);
+        result = ESP_OK;
+        goto cleanup;
     }
 
     wifi_link_broadcast(from, text);
@@ -196,7 +384,78 @@ static esp_err_t send_post_handler(httpd_req_t *req)
 
 cleanup:
     free(body);
+    free(text);
     return result;
+}
+
+// ============================
+// WebSocket
+// ============================
+
+static void ws_handle_frame(httpd_req_t *req, char *payload)
+{
+    int fd = httpd_req_to_sockfd(req);
+
+    if (strncmp(payload, "setName:", 8) == 0) {
+        const char *name = payload + 8;
+        if (strlen(name) == 0 || strchr(name, ':')) {
+            ESP_LOGW(TAG, "Rejected name from fd %d: '%s'", fd, name);
+            ws_notify(fd, "Недопустимое имя");
+            return;
+        }
+        client_set_name(fd, name);
+        ESP_LOGI(TAG, "Client %d set name to %s", fd, name);
+        return;
+    }
+
+    if (strncmp(payload, "msg:", 4) != 0) {
+        return;
+    }
+
+    char *frame_name = payload + 4;
+    char *colon = strchr(frame_name, ':');
+    if (!colon) {
+        ESP_LOGW(TAG, "Malformed msg frame, no name separator: %s", payload);
+        return;
+    }
+
+    *colon = '\0';
+    char *text = colon + 1;
+
+    if (strlen(text) == 0) {
+        return;
+    }
+
+    // Имя из setName: надёжнее того, что пришло в кадре
+    char from[WS_NAME_MAX] = {0};
+    if (!client_get_name(fd, from, sizeof(from))) {
+        strlcpy(from, frame_name, sizeof(from));
+    }
+    if (strlen(from) == 0) {
+        strlcpy(from, "Unknown", sizeof(from));
+    }
+
+    if (!s_tx_queue) {
+        ws_notify(fd, "Передатчик недоступен");
+        return;
+    }
+
+    char *msg = strdup(text);
+    if (!msg) {
+        ws_notify(fd, "Недостаточно памяти");
+        return;
+    }
+
+    if (xQueueSend(s_tx_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
+        free(msg);
+        ESP_LOGW(TAG, "TX queue full, WS message dropped");
+        ws_notify(fd, "Очередь передачи занята, сообщение не отправлено");
+        return;
+    }
+
+    // Рассылаем всем, включая отправителя: для него это подтверждение,
+    // что сообщение принято в очередь на передачу
+    wifi_link_broadcast(from, text);
 }
 
 static esp_err_t ws_handler(httpd_req_t *req)
@@ -206,65 +465,72 @@ static esp_err_t ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Буфер под кадр "msg:<имя>:<текст>", в куче чтобы не раздувать стек httpd
-    uint8_t *buf = (uint8_t *)calloc(1, WS_BUF_SIZE);
+    httpd_ws_frame_t ws_pkt = {0};
+    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
+
+    // Первый вызов без буфера возвращает длину кадра
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "WS frame header recv failed: %d", ret);
+        return ret;
+    }
+
+    if (ws_pkt.len == 0) {
+        return ESP_OK;
+    }
+
+    if (ws_pkt.len > WS_HARD_MAX_LEN) {
+        ESP_LOGE(TAG, "WS frame of %u bytes, closing session",
+                 (unsigned)ws_pkt.len);
+        return ESP_FAIL;
+    }
+
+    uint8_t *buf = (uint8_t *)calloc(1, ws_pkt.len + 1);
     if (!buf) {
         ESP_LOGE(TAG, "WS buffer alloc failed");
         return ESP_ERR_NO_MEM;
     }
-
-    httpd_ws_frame_t ws_pkt = {0};
-    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
     ws_pkt.payload = buf;
-    ws_pkt.len = 0;
 
-    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, WS_BUF_SIZE - 1);
+    // Кадр вычитываем целиком даже если он слишком длинный:
+    // иначе остаток тела примется за заголовок следующего кадра
+    ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "WS recv failed: %d", ret);
         free(buf);
         return ret;
     }
 
-    if (ws_pkt.type == HTTPD_WS_TYPE_TEXT && ws_pkt.len > 0) {
-        ws_pkt.payload[ws_pkt.len] = '\0';
-        ESP_LOGI(TAG, "WS text from fd %d: %s", httpd_req_to_sockfd(req), ws_pkt.payload);
+    if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
+        buf[ws_pkt.len] = '\0';
 
-        // Обработка смены имени
-        if (strncmp((const char *)ws_pkt.payload, "setName:", 8) == 0) {
-            ESP_LOGI(TAG, "Client %d set name to %s", httpd_req_to_sockfd(req), ws_pkt.payload + 8);
-        } 
-        // НОВАЯ ОБРАБОТКА: Прием сообщения от клиента
-        else if (strncmp((const char *)ws_pkt.payload, "msg:", 4) == 0) {
-            char *payload = (char *)ws_pkt.payload + 4;
-            char *from = payload;
-            char *colon = strchr(payload, ':');
-            
-            if (colon) {
-                *colon = '\0'; // Разделяем строку на "от кого" и "текст"
-                char *text = colon + 1;
-
-                // Кладем в очередь на передачу в эфир
-                if (s_tx_queue && strlen(text) > 0) {
-                    char *msg = strdup(text);
-                    if (msg) {
-                        if (xQueueSend(s_tx_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
-                            free(msg);
-                            ESP_LOGW(TAG, "TX queue full, WS message dropped");
-                        }
-                    }
-                }
-                // Рассылаем всем клиентам (включая отправителя, чтобы он увидел в чате)
-                wifi_link_broadcast(from, text);
-            } else {
-                ESP_LOGW(TAG, "Malformed msg frame, no name separator: %s",
-                         ws_pkt.payload);
-            }
+        if (ws_pkt.len > WS_MAX_FRAME_LEN) {
+            ESP_LOGW(TAG, "WS frame too long (%u bytes), ignored",
+                     (unsigned)ws_pkt.len);
+            ws_notify(httpd_req_to_sockfd(req), "Сообщение слишком длинное");
+        } else {
+            ESP_LOGI(TAG, "WS text from fd %d: %s",
+                     httpd_req_to_sockfd(req), (char *)buf);
+            ws_handle_frame(req, (char *)buf);
         }
     }
 
     free(buf);
     return ESP_OK;
 }
+
+// Сокет закрывает httpd, но имя клиента нужно снять самим:
+// номера дескрипторов переиспользуются
+static void ws_close_fn(httpd_handle_t hd, int sockfd)
+{
+    (void)hd;
+    client_forget(sockfd);
+    close(sockfd);
+}
+
+// ============================
+// Wi-Fi и запуск серверов
+// ============================
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
@@ -286,7 +552,7 @@ static esp_err_t start_http_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.core_id = 0; 
+    config.core_id = 0;
     config.max_open_sockets = 4;
     config.max_uri_handlers = 4;
     config.lru_purge_enable = true;
@@ -321,10 +587,11 @@ static esp_err_t start_ws_server(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 81;
     config.ctrl_port = 32769;
-    config.core_id = 0; 
+    config.core_id = 0;
     config.max_open_sockets = WS_MAX_CLIENTS;
     config.max_uri_handlers = 2;
     config.lru_purge_enable = true;
+    config.close_fn = ws_close_fn;
 
     if (httpd_start(&s_ws_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "WS server start failed");
@@ -377,11 +644,15 @@ void wifi_link_init(void)
     uint8_t mac[6] = {0};
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP));
 
-    char ssid[33];
-    int ssid_len = snprintf(ssid, sizeof(ssid), "%s%02X%02X",
-                            WIFI_SSID_PREFIX, mac[4], mac[5]);
-
     wifi_config_t wifi_config = {0};
+    char ssid[sizeof(wifi_config.ap.ssid) + 1];
+    int written = snprintf(ssid, sizeof(ssid), "%s%02X%02X",
+                           WIFI_SSID_PREFIX, mac[4], mac[5]);
+    size_t ssid_len = (written < 0) ? 0 : (size_t)written;
+    if (ssid_len > sizeof(wifi_config.ap.ssid)) {
+        ssid_len = sizeof(wifi_config.ap.ssid);
+    }
+
     memcpy(wifi_config.ap.ssid, ssid, ssid_len);
     wifi_config.ap.ssid_len = ssid_len;
     memcpy(wifi_config.ap.password, WIFI_PASS, strlen(WIFI_PASS));
