@@ -16,7 +16,9 @@
 #include "esp_netif.h"
 #include "esp_http_server.h"
 
-#define WIFI_SSID       "AFSK-TRX"
+// К префиксу добавляются последние два байта MAC точки доступа:
+// так несколько плат рядом не дают одинаковый SSID
+#define WIFI_SSID_PREFIX "AFSK-TRX-"
 #define WIFI_PASS       "afsk12345"
 #define WIFI_CHANNEL    1
 #define WIFI_MAX_STA    4
@@ -372,9 +374,16 @@ void wifi_link_init(void)
                                                          &wifi_event_handler,
                                                          NULL, NULL));
 
+    uint8_t mac[6] = {0};
+    ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP));
+
+    char ssid[33];
+    int ssid_len = snprintf(ssid, sizeof(ssid), "%s%02X%02X",
+                            WIFI_SSID_PREFIX, mac[4], mac[5]);
+
     wifi_config_t wifi_config = {0};
-    memcpy(wifi_config.ap.ssid, WIFI_SSID, strlen(WIFI_SSID));
-    wifi_config.ap.ssid_len = strlen(WIFI_SSID);
+    memcpy(wifi_config.ap.ssid, ssid, ssid_len);
+    wifi_config.ap.ssid_len = ssid_len;
     memcpy(wifi_config.ap.password, WIFI_PASS, strlen(WIFI_PASS));
     wifi_config.ap.channel = WIFI_CHANNEL;
     wifi_config.ap.max_connection = WIFI_MAX_STA;
@@ -385,7 +394,7 @@ void wifi_link_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_ERROR_CHECK(esp_wifi_set_inactive_time(WIFI_IF_AP, WIFI_INACTIVE_TIME_S));
 
-    ESP_LOGI(TAG, "Wi-Fi AP started: SSID=%s, IP=192.168.4.1", WIFI_SSID);
+    ESP_LOGI(TAG, "Wi-Fi AP started: SSID=%s, IP=192.168.4.1", ssid);
 
     if (start_http_server() != ESP_OK) {
         ESP_LOGE(TAG, "HTTP server failed to start");
