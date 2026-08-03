@@ -25,6 +25,7 @@
 #define TX_QUEUE_LEN    4
 #define POST_BUF_SIZE   1024
 #define WS_MAX_CLIENTS  4
+#define WS_BUF_SIZE     1024
 
 static const char *TAG = "WIFI_LINK";
 
@@ -203,16 +204,22 @@ static esp_err_t ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Увеличили буфер для приема сообщений (имя + текст)
-    uint8_t buf[256] = {0};
+    // Буфер под кадр "msg:<имя>:<текст>", в куче чтобы не раздувать стек httpd
+    uint8_t *buf = (uint8_t *)calloc(1, WS_BUF_SIZE);
+    if (!buf) {
+        ESP_LOGE(TAG, "WS buffer alloc failed");
+        return ESP_ERR_NO_MEM;
+    }
+
     httpd_ws_frame_t ws_pkt = {0};
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
     ws_pkt.payload = buf;
     ws_pkt.len = 0;
 
-    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, sizeof(buf) - 1);
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, WS_BUF_SIZE - 1);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "WS recv failed: %d", ret);
+        free(buf);
         return ret;
     }
 
@@ -253,6 +260,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
         }
     }
 
+    free(buf);
     return ESP_OK;
 }
 
