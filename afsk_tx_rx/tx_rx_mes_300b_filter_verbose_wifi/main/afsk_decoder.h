@@ -32,6 +32,10 @@ typedef struct {
     int bit_counter;
     int ones_count;
     int start_wait;
+    int start_dropout;       /* consecutive unusable bits while awaiting START */
+    int preamble_glitches;   /* bad bits seen in the current preamble          */
+    int preamble_best;       /* highest preamble score reached, for diagnostics */
+    uint32_t frames_aborted; /* frames lost before a byte was ever decoded     */
     uint8_t current_byte;
     uint8_t rx_buffer[MAX_MESSAGE_LEN];
     uint8_t rx_index;

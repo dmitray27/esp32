@@ -51,6 +51,26 @@ static const char *TAG = "AFSK_DEC";
 #define PREAMBLE_DETECT     (PREAMBLE_BITS * 3 / 4)
 #define START_MARK_TOLERANCE PREAMBLE_BITS
 
+/* Over the air the preamble is not clean: a noise burst, a fade or the
+ * squelch tail flips or mutes single bits. Zeroing the counter on every such
+ * bit means one glitch past a quarter of the preamble leaves too few mark
+ * bits to ever reach PREAMBLE_DETECT again, and the whole block is dropped
+ * without a trace. Charge a penalty instead, so the score tracks the recent
+ * quality of the line: scattered glitches only delay detection, while real
+ * noise (roughly a fifth of the bits bad or worse) still never gets there. */
+#define PREAMBLE_GLITCH_PENALTY  4
+
+/* Detection lands before the preamble ends, so a long run of mark bits is
+ * expected while waiting for START. A dropout in that run is not a reason to
+ * discard the frame either - only a sustained one is. */
+#define START_DROPOUT_TOLERANCE  32     /* bits, ~107 ms at 300 baud */
+
+#if AFSK_VERBOSE
+#define AFSK_DIAG(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
+#else
+#define AFSK_DIAG(fmt, ...) do {} while (0)
+#endif
+
 /* DPLL: fraction of the residual phase error removed on every detected
  * bit transition. 0.5 => halve the error each edge (fast lock). */
 #define PLL_INERTIA         0.5f
@@ -118,6 +138,26 @@ void afsk_decoder_init(afsk_decoder_t *dec, int sample_rate) {
              dec->config.samples_per_bit, MF_TAPS, dec->pll_step);
 }
 
+/* Give up on the frame being acquired and go back to hunting for a preamble.
+ * Every abort is reported: a block lost here never reaches the CRC check, so
+ * without this it disappears from the log entirely. */
+static void abort_frame(afsk_decoder_t *dec, const char *reason) {
+    (void)reason;
+    dec->frames_aborted++;
+    AFSK_DIAG("[RX] Frame aborted: %s (preamble peak %d/%d, %d glitch(es), "
+              "total aborted: %" PRIu32 ")",
+              reason, dec->preamble_best, PREAMBLE_DETECT,
+              dec->preamble_glitches, dec->frames_aborted);
+
+    dec->state = WAITING_FOR_PREAMBLE;
+    dec->ones_count = 0;
+    dec->start_wait = 0;
+    dec->start_dropout = 0;
+    dec->preamble_glitches = 0;
+    dec->preamble_best = 0;
+    dec->rx_index = 0;
+}
+
 /* Runs the framing state machine on one recovered bit. Returns true when a
  * complete message has been finalized into *msg. */
 static bool process_bit(afsk_decoder_t *dec, bool bit, float max_power,
@@ -125,22 +165,39 @@ static bool process_bit(afsk_decoder_t *dec, bool bit, float max_power,
                         afsk_message_t *msg) {
     bool message_ready = false;
     bool need_finalize = false;
+    bool usable = max_power > dec->signal_threshold && confidence >= CONFIDENCE_MIN;
 
     switch (dec->state) {
         case WAITING_FOR_PREAMBLE:
-            if (bit && max_power > dec->signal_threshold && confidence >= CONFIDENCE_MIN) {
+            if (bit && usable) {
                 dec->ones_count++;
+                if (dec->ones_count > dec->preamble_best) {
+                    dec->preamble_best = dec->ones_count;
+                }
                 if (AFSK_VERBOSE && dec->ones_count % PREAMBLE_LOG_EVERY == 0) {
-                    printf("[PREAMBLE] %d/%d (conf: %d%%)\n",
-                           dec->ones_count, PREAMBLE_DETECT, confidence);
+                    printf("[PREAMBLE] %d/%d (conf: %d%%, glitches: %d)\n",
+                           dec->ones_count, PREAMBLE_DETECT, confidence,
+                           dec->preamble_glitches);
                 }
                 if (dec->ones_count >= PREAMBLE_DETECT) {
                     dec->state = WAITING_FOR_START;
                     dec->ones_count = 0;
                     dec->start_wait = 0;
+                    dec->start_dropout = 0;
                 }
-            } else {
-                if (dec->ones_count > 0) dec->ones_count = 0;
+            } else if (dec->ones_count > 0) {
+                dec->preamble_glitches++;
+                dec->ones_count -= PREAMBLE_GLITCH_PENALTY;
+                if (dec->ones_count < 0) {
+                    dec->ones_count = 0;
+                    if (dec->preamble_best > PREAMBLE_LOG_EVERY) {
+                        AFSK_DIAG("[RX] Preamble lost at %d/%d after %d glitch(es)",
+                                  dec->preamble_best, PREAMBLE_DETECT,
+                                  dec->preamble_glitches);
+                    }
+                    dec->preamble_glitches = 0;
+                    dec->preamble_best = 0;
+                }
             }
             break;
 
@@ -150,19 +207,19 @@ static bool process_bit(afsk_decoder_t *dec, bool bit, float max_power,
              * can still land on a trailing preamble mark. Tolerate a few extra
              * mark bits and wait for the actual START (space) instead of
              * discarding the frame. */
-            if (max_power > dec->signal_threshold && confidence >= CONFIDENCE_MIN) {
+            if (usable) {
+                dec->start_dropout = 0;
                 if (!bit) {
                     dec->state = RECEIVING;
                     dec->bit_counter = 0;
                     dec->current_byte = 0;
                     dec->rx_index = 0;
                 } else if (++dec->start_wait > START_MARK_TOLERANCE) {
-                    dec->state = WAITING_FOR_PREAMBLE;
-                    dec->ones_count = 0;
+                    abort_frame(dec, "no START within the preamble");
                 }
-            } else {
-                dec->state = WAITING_FOR_PREAMBLE;
-                dec->ones_count = 0;
+            } else if (++dec->start_dropout > START_DROPOUT_TOLERANCE ||
+                       ++dec->start_wait > START_MARK_TOLERANCE) {
+                abort_frame(dec, "signal lost before START");
             }
             break;
 
@@ -185,16 +242,16 @@ static bool process_bit(afsk_decoder_t *dec, bool bit, float max_power,
             break;
 
         case WAITING_FOR_NEXT_BYTE:
-            if (!bit && max_power > dec->signal_threshold && confidence >= CONFIDENCE_MIN) {
+            if (!bit && usable) {
                 dec->state = RECEIVING;
                 dec->bit_counter = 0;
                 dec->current_byte = 0;
+            } else if (dec->rx_index > 1) {
+                need_finalize = true;
             } else {
-                if (dec->rx_index > 1) need_finalize = true;
-                else {
-                    dec->state = WAITING_FOR_PREAMBLE;
-                    dec->rx_index = 0;
-                }
+                /* Only the CRC byte (or nothing) was decoded: there is no
+                 * payload to hand over, the frame is simply gone */
+                abort_frame(dec, "frame ended before any payload byte");
             }
             break;
     }
@@ -213,6 +270,10 @@ static bool process_bit(afsk_decoder_t *dec, bool bit, float max_power,
             dec->state = WAITING_FOR_PREAMBLE;
             dec->rx_index = 0;
             dec->ones_count = 0;
+            dec->start_wait = 0;
+            dec->start_dropout = 0;
+            dec->preamble_glitches = 0;
+            dec->preamble_best = 0;
         }
         dec->last_signal_time = current_time;
     }

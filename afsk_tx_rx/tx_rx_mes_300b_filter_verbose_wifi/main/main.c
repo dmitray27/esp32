@@ -301,8 +301,9 @@ static void rx_task(void *pvParameters)
                 printf("[RX] --- Text ---\n");
                 printf("%s\n", message.text);
                 printf("========================================\n");
-                printf("[RX] Stats: Packets: %" PRIu32 " | CRC errors: %" PRIu32 "\n",
-                       packets_received, crc_errors);
+                printf("[RX] Stats: Packets: %" PRIu32 " | CRC errors: %" PRIu32
+                       " | Frames aborted: %" PRIu32 "\n",
+                       packets_received, crc_errors, decoder.frames_aborted);
 
                 if (message.crc_valid) {
                     int space = RX_ASSEMBLY_MAX - assembly_len;
