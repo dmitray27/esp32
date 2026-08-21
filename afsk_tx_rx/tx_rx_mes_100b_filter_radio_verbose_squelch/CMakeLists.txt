@@ -1,5 +1,0 @@
-cmake_minimum_required(VERSION 3.5)
-set(PROJECT_NAME tx_rx_mes_100b_filter_radio_verbose_squelch)
-set(SUPPORTED_TARGETS esp32)
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(${PROJECT_NAME})
