@@ -94,12 +94,13 @@ void wifi_link_broadcast(const char *from, const char *text)
     size_t max_clients = WS_MAX_CLIENTS;
     int client_fds[WS_MAX_CLIENTS];
     if (httpd_get_client_list(s_ws_server, &max_clients, client_fds) == ESP_OK) {
-        for (size_t i = 0; i < max_clients; i++) {
-            esp_err_t ret = httpd_ws_send_frame_async(s_ws_server, client_fds[i], &ws_pkt);
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "WS send to fd %d failed: %d", client_fds[i], ret);
-            }
-        }
+        for (size_t i = 0; i < max_clients; i++) {  
+    esp_err_t ret = httpd_ws_send_frame_async(s_ws_server, client_fds[i], &ws_pkt);  
+    if (ret != ESP_OK) {  
+        ESP_LOGW(TAG, "WS send to fd %d failed: %d", client_fds[i], ret);  
+        httpd_sess_trigger_close(s_ws_server, client_fds[i]);  // закрыть мёртвый слот сразу  
+    }  
+}
     }
     xSemaphoreGive(s_ws_mutex);
 
