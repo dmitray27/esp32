@@ -23,7 +23,7 @@
 
 #define TX_QUEUE_LEN    4
 #define POST_BUF_SIZE   1024
-#define WS_MAX_CLIENTS  4
+#define WS_MAX_CLIENTS  7
 
 static const char *TAG = "WIFI_LINK";
 
@@ -273,9 +273,13 @@ static esp_err_t start_http_server(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
     config.core_id = 0; 
-    config.max_open_sockets = 4;
+    config.max_open_sockets = 7;
     config.max_uri_handlers = 4;
     config.lru_purge_enable = true;
+    config.keep_alive_enable   = true;  
+    config.keep_alive_idle     = 5;   // сек тишины до первой probe  
+    config.keep_alive_interval = 5;   // интервал между probe  
+    config.keep_alive_count    = 3;   // probe до признания мёртвым (~20 с)
 
     if (httpd_start(&s_http_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "HTTP server start failed");
@@ -311,6 +315,10 @@ static esp_err_t start_ws_server(void)
     config.max_open_sockets = WS_MAX_CLIENTS;
     config.max_uri_handlers = 2;
     config.lru_purge_enable = true;
+    config.keep_alive_enable   = true;  
+    config.keep_alive_idle     = 5;  
+    config.keep_alive_interval = 5;  
+    config.keep_alive_count    = 3;
 
     if (httpd_start(&s_ws_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "WS server start failed");
